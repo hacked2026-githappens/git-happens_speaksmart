@@ -1,6 +1,10 @@
 fastapi
 uvicorn[standard]
 python-multipart
-openai-whisper
+python-dotenv
+faster-whisper
+ollama
+supabase
+ffmpeg-python
 opencv-python
 mediapipe
