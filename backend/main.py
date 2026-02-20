@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from collections import Counter
 from functools import lru_cache
@@ -15,6 +16,33 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def bootstrap_ffmpeg_path() -> None:
+    """Best-effort PATH fix for common Windows winget FFmpeg install locations."""
+    if shutil.which("ffmpeg"):
+        return
+
+    candidates: list[Path] = []
+    env_bin = os.getenv("FFMPEG_BIN")
+    if env_bin:
+        candidates.append(Path(env_bin))
+
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        winget_packages = Path(local_appdata) / "Microsoft" / "WinGet" / "Packages"
+        if winget_packages.exists():
+            candidates.extend(winget_packages.glob("Gyan.FFmpeg_*\\ffmpeg-*\\bin"))
+
+    for candidate in candidates:
+        if candidate.exists():
+            os.environ["PATH"] = f"{candidate};{os.environ.get('PATH', '')}"
+            if shutil.which("ffmpeg"):
+                logger.info("FFmpeg discovered at %s", candidate)
+                return
+
+
+bootstrap_ffmpeg_path()
 
 app = FastAPI(
     title="Presentation Coach API",
@@ -250,6 +278,12 @@ def get_whisper_model():
 
 def transcribe_with_whisper(media_path: Path) -> tuple[str, list[str]]:
     notes: list[str] = []
+    if shutil.which("ffmpeg") is None:
+        notes.append(
+            "ffmpeg is not installed or not on PATH. Install ffmpeg to enable Whisper transcription."
+        )
+        return "", notes
+
     try:
         model = get_whisper_model()
         result = model.transcribe(str(media_path), fp16=False)
@@ -261,6 +295,37 @@ def transcribe_with_whisper(media_path: Path) -> tuple[str, list[str]]:
         logger.exception("Whisper transcription failed: %s", exc)
         notes.append("Whisper failed on this file. Returning analysis with empty transcript.")
     return "", notes
+
+
+def detect_media_duration_seconds(media_path: Path) -> tuple[float | None, list[str]]:
+    notes: list[str] = []
+    ffprobe_binary = shutil.which("ffprobe")
+    if ffprobe_binary is None:
+        notes.append("ffprobe not found. Could not auto-detect media duration.")
+        return None, notes
+
+    command = [
+        ffprobe_binary,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(media_path),
+    ]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        raw_value = result.stdout.strip()
+        duration = float(raw_value)
+        if duration <= 0:
+            notes.append("ffprobe returned non-positive duration. Could not auto-detect media duration.")
+            return None, notes
+        return duration, notes
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        logger.exception("ffprobe duration detection failed: %s", exc)
+        notes.append("ffprobe failed to read media duration.")
+        return None, notes
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -275,8 +340,14 @@ async def analyze_session(
 
     try:
         if duration_seconds is None or duration_seconds <= 0:
-            duration_seconds = 30.0
-            notes.append("No valid duration provided. Defaulted to 30 seconds.")
+            detected_duration, duration_notes = detect_media_duration_seconds(temp_path)
+            notes.extend(duration_notes)
+            if detected_duration is not None:
+                duration_seconds = detected_duration
+                notes.append(f"Auto-detected media duration: {round(duration_seconds, 2)} seconds.")
+            else:
+                duration_seconds = 30.0
+                notes.append("No valid duration provided. Defaulted to 30 seconds.")
 
         if transcript_override and transcript_override.strip():
             transcript = transcript_override.strip()
