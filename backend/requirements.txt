@@ -4,3 +4,4 @@ python-multipart
 openai-whisper
 opencv-python
 mediapipe
+python-dotenv
