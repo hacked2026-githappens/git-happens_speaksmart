@@ -23,6 +23,8 @@ except Exception:  # pragma: no cover
 # Higher values increase the 0-10 energy score for the same motion.
 GESTURE_ENERGY_SCALE = 30.0
 DEFAULT_FPS_FALLBACK = 30.0
+EYE_CONTACT_CENTER_BAND = 0.15
+POSTURE_DELTA_SCALE = 20.0
 
 DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "hand_landmarker.task")
 
@@ -39,6 +41,10 @@ def _build_empty_response(samples: int = 0) -> dict:
             "activity_level": "unknown",
             "avg_velocity": 0.0,
             "samples": int(samples),
+            "eye_contact_score": 0.0,
+            "eye_contact_level": "unknown",
+            "posture_score": 0.0,
+            "posture_level": "unknown",
         }
     }
 
@@ -62,6 +68,26 @@ def _classify_activity(gesture_energy: float, transitions: int) -> str:
     if gesture_energy < 6.5:
         return "moderate"
     return "high"
+
+
+def _classify_eye_contact(score: float, face_samples: int) -> str:
+    if face_samples <= 0:
+        return "unknown"
+    if score < 4.0:
+        return "low"
+    if score < 7.0:
+        return "moderate"
+    return "high"
+
+
+def _classify_posture(score: float, posture_samples: int) -> str:
+    if posture_samples <= 1:
+        return "unknown"
+    if score < 4.0:
+        return "unstable"
+    if score < 7.0:
+        return "moderate"
+    return "stable"
 
 
 def _extract_hand_vector_task(result: object) -> list[float] | None:
@@ -105,6 +131,20 @@ def _extract_hand_vector_task(result: object) -> list[float] | None:
                 right = values
 
     return left + right
+
+
+def _get_face_detector():
+    """Create OpenCV Haar face detector; returns None if unavailable."""
+    if cv2 is None:
+        return None
+    try:
+        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+        detector = cv2.CascadeClassifier(cascade_path)
+        if detector.empty():
+            return None
+        return detector
+    except Exception:
+        return None
 
 
 def analyze_nonverbal(video_path: str, target_fps: int = 5) -> dict:
@@ -156,6 +196,10 @@ def analyze_nonverbal(video_path: str, target_fps: int = 5) -> dict:
         velocities: list[float] = []
         prev_vec: list[float] | None = None
         frame_index = 0
+        face_centered_count = 0
+        face_detected_count = 0
+        face_center_y_history: list[float] = []
+        face_detector = _get_face_detector()
 
         with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
             while True:
@@ -186,11 +230,37 @@ def analyze_nonverbal(video_path: str, target_fps: int = 5) -> dict:
                 if curr_vec is not None:
                     prev_vec = curr_vec
 
+                if face_detector is not None:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    faces = face_detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40))
+                    if len(faces) > 0:
+                        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+                        frame_h, frame_w = frame.shape[:2]
+                        cx = (x + (w / 2)) / max(frame_w, 1)
+                        cy = (y + (h / 2)) / max(frame_h, 1)
+                        face_detected_count += 1
+                        face_center_y_history.append(float(cy))
+                        if abs(cx - 0.5) <= EYE_CONTACT_CENTER_BAND:
+                            face_centered_count += 1
+
                 frame_index += 1
 
         avg_velocity = _mean(velocities)
         gesture_energy = _clamp(avg_velocity * GESTURE_ENERGY_SCALE, 0.0, 10.0)
         activity_level = _classify_activity(gesture_energy, transitions=len(velocities))
+        eye_contact_ratio = (face_centered_count / face_detected_count) if face_detected_count > 0 else 0.0
+        eye_contact_score = _clamp(eye_contact_ratio * 10.0, 0.0, 10.0)
+        eye_contact_level = _classify_eye_contact(eye_contact_score, face_detected_count)
+
+        posture_delta = 0.0
+        if len(face_center_y_history) > 1:
+            deltas = [
+                abs(face_center_y_history[i] - face_center_y_history[i - 1])
+                for i in range(1, len(face_center_y_history))
+            ]
+            posture_delta = _mean(deltas)
+        posture_score = _clamp(10.0 - (posture_delta * POSTURE_DELTA_SCALE), 0.0, 10.0)
+        posture_level = _classify_posture(posture_score, len(face_center_y_history))
 
         return {
             "non_verbal": {
@@ -198,6 +268,10 @@ def analyze_nonverbal(video_path: str, target_fps: int = 5) -> dict:
                 "activity_level": activity_level,
                 "avg_velocity": float(round(avg_velocity, 6)),
                 "samples": int(samples),
+                "eye_contact_score": float(round(eye_contact_score, 3)),
+                "eye_contact_level": eye_contact_level,
+                "posture_score": float(round(posture_score, 3)),
+                "posture_level": posture_level,
             }
         }
 
