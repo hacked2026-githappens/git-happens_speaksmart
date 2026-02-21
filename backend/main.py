@@ -107,6 +107,7 @@ class FollowUpQuestionRequest(BaseModel):
     summary_feedback: list[str] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
+    preset: str = "general"
 
 
 class FollowUpQuestionResponse(BaseModel):
@@ -159,6 +160,7 @@ async def followup_question(payload: FollowUpQuestionRequest) -> FollowUpQuestio
         summary_feedback=payload.summary_feedback,
         strengths=payload.strengths,
         improvements=payload.improvements,
+        preset=payload.preset,
     )
     return FollowUpQuestionResponse(question=question)
 
@@ -433,6 +435,7 @@ async def analyze_session(
     file: UploadFile = File(...),
     duration_seconds: float | None = Form(default=None),
     transcript_override: str | None = Form(default=None),
+    preset: str = Form(default="general"),
 ) -> AnalyzeResponse:
     ensure_supported_media(file)
     temp_path = save_upload_to_temp(file)
@@ -470,7 +473,7 @@ async def analyze_session(
             "filler_word_count": metrics.get("filler_word_count", 0),
             "non_verbal": metrics.get("non_verbal", {}),
         }
-        llm_result = analyze_with_ollama(words, analysis_context)
+        llm_result = analyze_with_ollama(words, analysis_context, preset=preset)
         llm_events = map_llm_events(llm_result.get("feedbackEvents", []), words)
         llm_result["feedbackEvents"] = llm_events
 

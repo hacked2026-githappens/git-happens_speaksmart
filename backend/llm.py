@@ -122,6 +122,39 @@ Evaluation rules:
 - No markdown and no explanation text outside JSON."""
 
 
+PRESET_CONTEXT: dict[str, str] = {
+    "general": "",
+    "pitch": (
+        "Context: This is a startup or investor PITCH. "
+        "Prioritise: confident, hedge-free language; crisp evidence; a strong opening hook; "
+        "a clear ask or CTA in the conclusion. "
+        "Score confidence_language and content_structure more strictly. "
+        "Flag any hedging (I think / maybe / kind of) as high severity."
+    ),
+    "classroom": (
+        "Context: This is a CLASSROOM or educational presentation. "
+        "Prioritise: clarity of explanation, logical step-by-step structure, appropriate pacing "
+        "for audience comprehension, and helpful examples or analogies. "
+        "Score content_structure and clarity more strictly. "
+        "Pace is more forgiving — slower delivery (100-140 WPM) is acceptable."
+    ),
+    "interview": (
+        "Context: This is a JOB INTERVIEW or professional panel. "
+        "Prioritise: direct answers, concrete examples (prefer STAR structure), "
+        "confident and specific language, no rambling. "
+        "Score confidence_language and clarity more strictly. "
+        "Flag vague or unsupported claims as high severity."
+    ),
+    "keynote": (
+        "Context: This is a KEYNOTE or large-audience talk. "
+        "Prioritise: storytelling, audience engagement, energy and variation, "
+        "memorable phrases, and a powerful open and close. "
+        "Score content_structure and pace_consistency more strictly. "
+        "Reward energetic delivery in strengths when gesture_energy is moderate or high."
+    ),
+}
+
+
 def _safe_defaults() -> dict:
     return {
         "scores": {
@@ -333,7 +366,7 @@ def _enforce_unknown_non_verbal_policy(data: dict, analysis_context: dict | None
     return data
 
 
-def analyze_with_llm(words: list[dict], analysis_context: dict | None = None) -> dict:
+def analyze_with_llm(words: list[dict], analysis_context: dict | None = None, preset: str = "general") -> dict:
     """
     Call Groq API with the indexed transcript and return coaching results.
 
@@ -344,6 +377,7 @@ def analyze_with_llm(words: list[dict], analysis_context: dict | None = None) ->
         analysis_context: optional dict with keys: pace_label, words_per_minute,
                           filler_word_count, non_verbal (gesture_energy, activity_level,
                           avg_velocity, samples)
+        preset: speaking context — one of: general, pitch, classroom, interview, keynote
 
     Returns:
         dict with keys: scores, strengths, improvements, structure, feedbackEvents, stats
@@ -371,8 +405,11 @@ def analyze_with_llm(words: list[dict], analysis_context: dict | None = None) ->
     else:
         user_content = indexed_transcript
 
+    preset_blurb = PRESET_CONTEXT.get(preset, "")
+    system_content = COACH_SYSTEM_PROMPT if not preset_blurb else COACH_SYSTEM_PROMPT + "\n\n" + preset_blurb
+
     messages = [
-        {"role": "system", "content": COACH_SYSTEM_PROMPT},
+        {"role": "system", "content": system_content},
         {"role": "user", "content": user_content},
     ]
 
@@ -427,6 +464,7 @@ def generate_follow_up_question(
     summary_feedback: list[str] | None = None,
     strengths: list[str] | None = None,
     improvements: list[str] | None = None,
+    preset: str = "general",
 ) -> str:
     fallback = (
         "In 60-90 seconds, restate your core message and support it with one concrete example."
@@ -438,12 +476,15 @@ def generate_follow_up_question(
         return fallback
 
     transcript_excerpt = " ".join((transcript or "").split()[:900]).strip()
-    payload = {
+    payload: dict = {
         "transcript_excerpt": transcript_excerpt,
         "summary_feedback": (summary_feedback or [])[:5],
         "strengths": (strengths or [])[:4],
         "improvements": (improvements or [])[:5],
     }
+    preset_blurb = PRESET_CONTEXT.get(preset, "")
+    if preset_blurb:
+        payload["context"] = preset_blurb
 
     client = Groq(api_key=api_key)
     messages = [
@@ -564,9 +605,9 @@ def evaluate_follow_up_answer(
     return _safe_follow_up_answer_eval_defaults()
 
 
-def analyze_with_ollama(words: list[dict], analysis_context: dict | None = None) -> dict:
+def analyze_with_ollama(words: list[dict], analysis_context: dict | None = None, preset: str = "general") -> dict:
     """Backward-compatible alias for analyze_with_llm."""
-    return analyze_with_llm(words, analysis_context)
+    return analyze_with_llm(words, analysis_context, preset)
 
 
 def map_llm_events(llm_events: list[dict], words: list[dict]) -> list[dict]:
