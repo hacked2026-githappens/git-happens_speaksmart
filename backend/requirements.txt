@@ -8,3 +8,4 @@ supabase
 ffmpeg-python
 opencv-python
 mediapipe
+python-dotenv

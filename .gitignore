@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+*.mp4
+
+# Non-verbal gesture model (local artifact; download per developer)
+backend/non_verbal/models/*.task
+!backend/non_verbal/models/.gitkeep
