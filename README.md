@@ -11,7 +11,7 @@ SpeakSmart is a hackathon app that helps people become better public speakers. U
 | Frontend | React Native + Expo SDK 54, Expo Router, NativeWind (Tailwind) |
 | Backend | Python FastAPI + Uvicorn |
 | Transcription | Local Whisper (`faster-whisper`) with word-level timestamps — free |
-| Speech Analysis | Local LLM via Ollama (`qwen2.5:7b`) — free, no API key |
+| Speech Analysis | Groq API (`llama-3.3-70b-versatile`) — free tier, requires API key |
 | Non-verbal Analysis | MediaPipe Holistic (hand landmark tracking) + OpenCV (frame extraction) |
 | Storage + DB | Supabase Storage (`videos` bucket) + Supabase Postgres (`jobs` table) |
 | Audio extraction | ffmpeg-python |
@@ -24,6 +24,11 @@ SpeakSmart is a hackathon app that helps people become better public speakers. U
 git-happens/
 ├── presentation-coach-app/   # React Native Expo frontend
 ├── backend/                  # Python FastAPI backend
+│   ├── main.py               # FastAPI app + /analyze endpoint
+│   ├── llm.py                # Groq LLM coaching analysis
+│   ├── non_verbal/           # MediaPipe gesture energy analysis
+│   ├── requirements.txt
+│   └── .env                  # Server secrets (never commit)
 ├── AGENTS.md                 # Context for AI agents and teammates
 └── README.md
 ```
@@ -34,11 +39,16 @@ git-happens/
 
 ### 1. Environment variables
 
-Copy the example file — only Supabase credentials are required:
-
 ```bash
 cp .env.example backend/.env
-# Fill in SUPABASE_URL and SUPABASE_SERVICE_KEY only
+```
+
+Fill in `backend/.env`:
+```
+GROQ_API_KEY=gsk_...       # Free at console.groq.com
+GROQ_MODEL=llama-3.3-70b-versatile
+WHISPER_MODEL=base
+CORS_ALLOW_ORIGINS=*
 ```
 
 Also create `presentation-coach-app/.env.local`:
@@ -46,39 +56,21 @@ Also create `presentation-coach-app/.env.local`:
 EXPO_PUBLIC_API_URL=http://localhost:8000
 ```
 
-No OpenAI or Anthropic API keys needed — Whisper and the LLM run locally for free.
+### 2. Run the backend (Windows)
 
-### 2. Supabase
-
-In your Supabase project:
-
-- Create a **Storage bucket** named `videos` (private)
-- Create a **table** named `jobs` — see [AGENTS.md](./AGENTS.md#supabase-schema) for the full schema
-
-### 3. Install Ollama (one-time)
-
-```bash
-# Download from https://ollama.com (or: winget install Ollama.Ollama)
-ollama pull qwen2.5:7b   # ~4.7GB, best JSON output — or: qwen2.5:3b (~2GB) if tight on space
-```
-
-### 4. Run the backend
-
-```bash
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-# API available at http://localhost:8000
+..\venv\Scripts\python.exe -m uvicorn main:app --reload --env-file .env --port 8000
 ```
 
-### 5. Run the frontend
+### 3. Run the frontend
 
 ```bash
 cd presentation-coach-app
-npx expo install   # installs all deps
-npx expo start --web      # web
-npx expo start --ios      # iOS simulator
-npx expo start --android  # Android emulator
+npx expo install
+npx expo start --web
 ```
 
 ---
@@ -87,7 +79,7 @@ npx expo start --android  # Android emulator
 
 1. User uploads a video file on the home screen
 2. Backend receives the video, stores it in Supabase, and returns a `jobId` immediately
-3. A background job extracts audio, transcribes it with Whisper, and simultaneously analyzes hand movements via MediaPipe — then runs LLM coaching analysis via Ollama
+3. Backend transcribes audio with Whisper (word-level timestamps), analyzes hand movements via MediaPipe, and runs LLM coaching analysis via Groq API
 4. Frontend polls `/api/results/{jobId}` every 2 seconds until the job is done
 5. Results screen shows an annotated video player with a marker timeline, coaching popups, and a full dashboard
 
@@ -98,7 +90,7 @@ npx expo start --android  # Android emulator
 - Annotated video player with clickable timeline markers
 - Auto-popups as video plays at moments of flagged speech
 - Filler word detection, pace analysis, repetition detection (via Whisper)
-- Scores, strengths, improvements, and structure analysis (via Ollama)
+- Scores, strengths, improvements, and structure analysis (via Groq API)
 - Hand movement / gesture energy score with coaching tips (via MediaPipe)
 - Transcript with color-coded word chips — tap any word to seek the video
 - Radar chart of 5 coaching dimensions

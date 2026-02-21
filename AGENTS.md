@@ -16,7 +16,7 @@ Flow:
    - Downloads video, extracts audio with ffmpeg (mono 16kHz MP3)
    - **In parallel:** transcribes audio with `faster-whisper` (word-level timestamps) AND analyzes video frames with MediaPipe Holistic (hand landmark tracking → gesture energy score)
    - Detects filler words, pace issues, and repetition from Whisper word array
-   - Sends indexed transcript to local LLM via Ollama (free, no API key) for coaching analysis
+   - Sends indexed transcript to Groq API (`llama-3.3-70b-versatile`) for coaching analysis
    - Merges all feedback events + non-verbal results, stores in Supabase
 4. Frontend polls until done, then shows: annotated video player + coaching dashboard
 
@@ -54,9 +54,13 @@ git-happens/
 │   ├── tailwind.config.js
 │   └── babel.config.js
 │
-├── backend/                     # Python FastAPI backend (extended from existing scaffold)
-│   ├── main.py                  # FastAPI app + all routes (existing + new /api/analyze, /api/results)
-│   ├── job_runner.py            # New: async pipeline (ffmpeg → faster-whisper + MediaPipe in parallel → filler/pace/rep → Ollama → Supabase)
+├── backend/                     # Python FastAPI backend
+│   ├── main.py                  # FastAPI app + POST /analyze endpoint
+│   ├── llm.py                   # Groq API coaching analysis (analyze_with_llm, map_llm_events)
+│   ├── non_verbal/              # MediaPipe gesture energy analysis module
+│   │   ├── vision.py            # Hand landmark tracking → gesture_energy score
+│   │   └── __init__.py
+│   ├── test_llm.py              # Standalone LLM test (run with: python test_llm.py)
 │   ├── requirements.txt         # Python dependencies
 │   └── .env                    # Server-side secrets (never commit)
 │
@@ -200,16 +204,12 @@ Use `Platform.OS === 'web'` to branch.
 
 ## Environment Variables
 
-No paid API keys required. Both Whisper and the LLM run locally for free.
-
 ### `backend/.env`
 ```
-SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...        # service_role key, NOT anon key — only external service needed
-CORS_ALLOW_ORIGINS=http://localhost:8081
-PORT=8000
+GROQ_API_KEY=gsk_...               # Free API key from console.groq.com
+GROQ_MODEL=llama-3.3-70b-versatile # or llama-3.1-8b-instant for faster responses
 WHISPER_MODEL=base                 # tiny | base | small | medium
-OLLAMA_MODEL=qwen2.5:7b            # must be pulled first: ollama pull qwen2.5:7b
+CORS_ALLOW_ORIGINS=*
 ```
 
 ### `presentation-coach-app/.env.local`
@@ -227,28 +227,21 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 faster-whisper      # Local Whisper — 4-8x faster than openai-whisper, same accuracy, free
-ollama              # Local LLM client — free, no API key (requires Ollama app installed)
+groq                # Groq API client — free tier, fast inference
 supabase            # Supabase Python client
 ffmpeg-python       # ffmpeg wrapper for audio extraction
 opencv-python       # Frame extraction for non-verbal analysis
-mediapipe           # Hand + pose landmark detection (Holistic solution)
+mediapipe           # Hand + pose landmark detection
 ```
-
-Note: `openai-whisper` has been replaced by `faster-whisper`. `opencv-python` and `mediapipe` are used for hand movement analysis.
-Do NOT add `openai` or `anthropic` — no paid API calls.
 
 **faster-whisper API is different from openai-whisper:**
 - Returns a generator (not a list) — must consume in the same thread
 - Word objects are NamedTuples: `w.word`, `w.start`, `w.end` (not dict keys)
 
-**One-time setup per developer:**
-```bash
-# 1. Install Ollama: https://ollama.com  (or: winget install Ollama.Ollama)
-# 2. Pull a model (Ollama starts automatically in background):
-ollama pull qwen2.5:7b    # ~4.7GB — best JSON reliability (recommended)
-# or if RAM/disk is tight:
-ollama pull qwen2.5:3b    # ~2GB — faster, slightly lower quality
-```
+**LLM — Groq API:**
+- Get a free key at console.groq.com
+- `analyze_with_llm(words)` in `llm.py` — backward alias `analyze_with_ollama` also available
+- Returns full coaching JSON: scores, strengths, improvements, structure, feedbackEvents, stats
 
 ---
 
@@ -269,11 +262,14 @@ Work in this sequence — do not skip ahead:
 
 ## Running Locally
 
-```bash
+```powershell
+# One-time setup (from repo root)
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+
 # Terminal 1 — backend
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+..\venv\Scripts\python.exe -m uvicorn main:app --reload --env-file .env --port 8000
 
 # Terminal 2 — frontend
 cd presentation-coach-app
@@ -281,3 +277,9 @@ npx expo start --web
 ```
 
 Verify: `GET http://localhost:8000/health` → `{ "status": "ok" }`
+
+Test the LLM module standalone (no server needed):
+```powershell
+cd backend
+..\venv\Scripts\python.exe test_llm.py
+```
