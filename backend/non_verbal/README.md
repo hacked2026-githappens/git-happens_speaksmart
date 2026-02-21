@@ -17,10 +17,19 @@ It is intentionally isolated so teammates can validate it before full pipeline i
     "gesture_energy": 0.0,
     "activity_level": "low|moderate|high|unknown",
     "avg_velocity": 0.0,
-    "samples": 0
+    "samples": 0,
+    "eye_contact_score": 0.0,
+    "eye_contact_level": "low|moderate|high|unknown",
+    "posture_score": 0.0,
+    "posture_level": "unstable|moderate|stable|unknown"
   }
 }
 ```
+
+Field notes:
+- `gesture_*`: derived from hand landmark motion (MediaPipe Hand Landmarker).
+- `eye_contact_*`: camera-facing proxy derived from face-center stability in frame (not true gaze tracking).
+- `posture_*`: posture stability proxy derived from vertical face movement over time (not full skeletal posture scoring).
 
 ## Dependencies
 
@@ -113,13 +122,26 @@ print(analyze_nonverbal("path/to/video.mp4", target_fps=5))
 If dependencies/model are missing, it fails safely and returns:
 
 ```json
-{"non_verbal":{"gesture_energy":0.0,"activity_level":"unknown","avg_velocity":0.0,"samples":0}}
+{
+  "non_verbal": {
+    "gesture_energy": 0.0,
+    "activity_level": "unknown",
+    "avg_velocity": 0.0,
+    "samples": 0,
+    "eye_contact_score": 0.0,
+    "eye_contact_level": "unknown",
+    "posture_score": 0.0,
+    "posture_level": "unknown"
+  }
+}
 ```
 
 ## Calibration Notes
 
 - `GESTURE_ENERGY_SCALE` in `backend/non_verbal/vision.py` controls sensitivity.
 - Current default is tuned to avoid constant clamping at `10`.
+- `eye_contact_*` and `posture_*` are intentionally lightweight proxies for hackathon speed and robustness.
+- Keep feedback language calibrated as "camera-facing consistency" and "posture stability" rather than absolute gaze/posture claims.
 - Validate with at least:
   - one low-gesture video
   - one moderate/high-gesture video

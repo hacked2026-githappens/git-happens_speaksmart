@@ -21,6 +21,7 @@ from llm import (
     generate_follow_up_question,
     map_llm_events,
 )
+from non_verbal.vision import analyze_nonverbal
 
 logger = logging.getLogger(__name__)
 
@@ -233,10 +234,14 @@ def build_speech_metrics(transcript: str, duration_seconds: float) -> dict[str, 
         "filler_words": filler_counts,
         "stutter_events": stutter_events,
         "non_verbal": {
-            "status": "not_analyzed_yet",
-            "eye_contact": "unknown",
-            "posture": "unknown",
-            "gesture_energy": "unknown",
+            "gesture_energy": 0.0,
+            "activity_level": "unknown",
+            "avg_velocity": 0.0,
+            "samples": 0,
+            "eye_contact_score": 0.0,
+            "eye_contact_level": "unknown",
+            "posture_score": 0.0,
+            "posture_level": "unknown",
         },
     }
 
@@ -330,7 +335,6 @@ def build_summary_feedback(metrics: dict[str, Any]) -> list[str]:
     if stutter_events > 0:
         feedback.append("Minor stutter patterns detected. Slow down sentence starts and breathe between points.")
 
-    feedback.append("Non-verbal analysis is currently placeholder-only. Add MediaPipe to score posture and eye contact.")
     return feedback
 
 
@@ -454,10 +458,19 @@ async def analyze_session(
             notes.extend(whisper_notes)
 
         metrics = build_speech_metrics(transcript, duration_seconds)
+        nv_result = analyze_nonverbal(str(temp_path))
+        metrics["non_verbal"] = nv_result["non_verbal"]
+
         markers = build_timeline_markers(metrics)
         summary_feedback = build_summary_feedback(metrics)
 
-        llm_result = analyze_with_ollama(words)
+        analysis_context = {
+            "pace_label": metrics.get("pace_label"),
+            "words_per_minute": metrics.get("words_per_minute"),
+            "filler_word_count": metrics.get("filler_word_count", 0),
+            "non_verbal": metrics.get("non_verbal", {}),
+        }
+        llm_result = analyze_with_ollama(words, analysis_context)
         llm_events = map_llm_events(llm_result.get("feedbackEvents", []), words)
         llm_result["feedbackEvents"] = llm_events
 
