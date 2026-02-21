@@ -3,7 +3,7 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 faster-whisper
-ollama
+groq
 supabase
 ffmpeg-python
 opencv-python

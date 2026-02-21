@@ -15,6 +15,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from llm import analyze_with_ollama, map_llm_events
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +92,7 @@ class AnalyzeResponse(BaseModel):
     metrics: dict[str, Any]
     summary_feedback: list[str]
     markers: list[TimelineMarker]
+    llm_analysis: dict[str, Any]
     notes: list[str]
 
 
@@ -270,31 +273,48 @@ def save_upload_to_temp(upload: UploadFile) -> Path:
 
 @lru_cache(maxsize=1)
 def get_whisper_model():
-    import whisper
+    from faster_whisper import WhisperModel
 
     model_name = os.getenv("WHISPER_MODEL", "base")
-    return whisper.load_model(model_name)
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
 
 
-def transcribe_with_whisper(media_path: Path) -> tuple[str, list[str]]:
+def transcribe_with_whisper(media_path: Path) -> tuple[str, list[dict], list[str]]:
+    """Returns (transcript, words, notes).
+
+    words is a list of {"word", "start", "end", "index"} dicts for Ollama.
+    """
     notes: list[str] = []
     if shutil.which("ffmpeg") is None:
         notes.append(
             "ffmpeg is not installed or not on PATH. Install ffmpeg to enable Whisper transcription."
         )
-        return "", notes
+        return "", [], notes
 
     try:
         model = get_whisper_model()
-        result = model.transcribe(str(media_path), fp16=False)
-        transcript = (result.get("text") or "").strip()
-        return transcript, notes
+        segments, _ = model.transcribe(str(media_path), word_timestamps=True)
+
+        words: list[dict] = []
+        transcript_parts: list[str] = []
+        for segment in segments:
+            for w in (segment.words or []):
+                words.append({
+                    "word": w.word.strip(),
+                    "start": w.start,
+                    "end": w.end,
+                    "index": len(words),
+                })
+                transcript_parts.append(w.word)
+
+        transcript = "".join(transcript_parts).strip()
+        return transcript, words, notes
     except ImportError:
-        notes.append("Whisper is not installed. Transcript unavailable.")
+        notes.append("faster-whisper is not installed. Transcript unavailable.")
     except Exception as exc:
         logger.exception("Whisper transcription failed: %s", exc)
         notes.append("Whisper failed on this file. Returning analysis with empty transcript.")
-    return "", notes
+    return "", [], notes
 
 
 def detect_media_duration_seconds(media_path: Path) -> tuple[float | None, list[str]]:
@@ -349,16 +369,21 @@ async def analyze_session(
                 duration_seconds = 30.0
                 notes.append("No valid duration provided. Defaulted to 30 seconds.")
 
+        words: list[dict] = []
         if transcript_override and transcript_override.strip():
             transcript = transcript_override.strip()
-            notes.append("Used transcript override from client.")
+            notes.append("Used transcript override from client. Word timestamps unavailable — LLM will use plain text.")
         else:
-            transcript, whisper_notes = transcribe_with_whisper(temp_path)
+            transcript, words, whisper_notes = transcribe_with_whisper(temp_path)
             notes.extend(whisper_notes)
 
         metrics = build_speech_metrics(transcript, duration_seconds)
         markers = build_timeline_markers(metrics)
         summary_feedback = build_summary_feedback(metrics)
+
+        llm_result = analyze_with_ollama(words)
+        llm_events = map_llm_events(llm_result.get("feedbackEvents", []), words)
+        llm_result["feedbackEvents"] = llm_events
 
         if not transcript:
             notes.append("Transcript is empty. Speaking metrics may be limited.")
@@ -368,6 +393,7 @@ async def analyze_session(
             metrics=metrics,
             summary_feedback=summary_feedback,
             markers=markers,
+            llm_analysis=llm_result,
             notes=notes,
         )
     finally:

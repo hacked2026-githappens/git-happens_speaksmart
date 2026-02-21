@@ -6,11 +6,11 @@ import os
 import re
 import uuid
 
-import ollama
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 MAX_TRANSCRIPT_WORDS = 2000  # truncate to avoid latency on very long videos
 
 COACH_SYSTEM_PROMPT = """You are an expert public speaking coach. You will be given a numbered transcript in the format:
@@ -73,7 +73,7 @@ def _safe_defaults() -> dict:
             {
                 "title": "Analysis unavailable",
                 "detail": "The coaching model did not return a valid response.",
-                "actionable_tip": "Try re-uploading the video or check that Ollama is running.",
+                "actionable_tip": "Try re-uploading the video or check your GROQ_API_KEY.",
             }
         ],
         "structure": {
@@ -87,15 +87,12 @@ def _safe_defaults() -> dict:
 
 
 def _strip_and_parse(raw: str) -> dict | None:
-    """Strip qwen3 <think> blocks + markdown fences, then parse JSON."""
-    # 1. Strip <think>...</think> reasoning blocks (qwen3-specific)
-    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-
-    # 2. Strip markdown code fences (```json ... ``` or ``` ... ```)
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+    """Strip markdown fences, then parse JSON."""
+    # Strip markdown code fences (```json ... ``` or ``` ... ```)
+    text = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
     text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE).strip()
 
-    # 3. Extract the first {...} block in case there's surrounding text
+    # Extract the first {...} block in case there's surrounding text
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         text = match.group(0)
@@ -119,9 +116,9 @@ def _validate(data: dict) -> bool:
     return True
 
 
-def analyze_with_ollama(words: list[dict]) -> dict:
+def analyze_with_llm(words: list[dict]) -> dict:
     """
-    Call local Ollama LLM with the indexed transcript and return coaching results.
+    Call Groq API with the indexed transcript and return coaching results.
 
     Never raises — always returns a valid dict (safe defaults on failure).
 
@@ -133,6 +130,13 @@ def analyze_with_ollama(words: list[dict]) -> dict:
     """
     if not words:
         return _safe_defaults()
+
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        logger.error("GROQ_API_KEY not set")
+        return _safe_defaults()
+
+    client = Groq(api_key=api_key)
 
     # Truncate very long transcripts to avoid excessive latency
     truncated = words[:MAX_TRANSCRIPT_WORDS]
@@ -149,47 +153,52 @@ def analyze_with_ollama(words: list[dict]) -> dict:
 
     # First attempt
     try:
-        response = ollama.chat(
-            model=OLLAMA_MODEL,
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=messages,
-            format="json",
-            think=False,
+            response_format={"type": "json_object"},
+            max_tokens=2048,
         )
-        raw = response["message"]["content"]
+        raw = response.choices[0].message.content or ""
         data = _strip_and_parse(raw)
         if data and _validate(data):
             return data
-        logger.warning("LLM returned invalid/incomplete JSON on first attempt, retrying...")
+        logger.warning("LLM response missing keys on first attempt, retrying...\nRaw snippet: %s", raw[:300])
     except Exception as exc:
-        logger.error("Ollama first attempt failed: %s", exc)
+        logger.error("Groq first attempt failed: %s", exc)
 
-    # Second attempt — stricter instruction appended
+    # Second attempt — stricter instruction
     try:
         retry_messages = messages + [
             {
                 "role": "user",
                 "content": (
-                    "Your previous response was not valid JSON. "
-                    "Return ONLY the JSON object. "
-                    "No markdown fences, no <think> blocks, no explanation."
+                    "Your previous response was missing required fields. "
+                    "Return the COMPLETE JSON object with ALL fields: "
+                    "scores, strengths, improvements, structure, feedbackEvents, stats. "
+                    "No markdown fences, no explanation."
                 ),
             }
         ]
-        response = ollama.chat(
-            model=OLLAMA_MODEL,
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=retry_messages,
-            format="json",
-            think=False,
+            response_format={"type": "json_object"},
+            max_tokens=2048,
         )
-        raw = response["message"]["content"]
+        raw = response.choices[0].message.content or ""
         data = _strip_and_parse(raw)
         if data and _validate(data):
             return data
         logger.error("LLM returned invalid JSON on retry, falling back to safe defaults")
     except Exception as exc:
-        logger.error("Ollama retry failed: %s", exc)
+        logger.error("Groq retry failed: %s", exc)
 
     return _safe_defaults()
+
+
+# Keep old name as alias so main.py import doesn't break
+analyze_with_ollama = analyze_with_llm
 
 
 def map_llm_events(llm_events: list[dict], words: list[dict]) -> list[dict]:
@@ -197,7 +206,7 @@ def map_llm_events(llm_events: list[dict], words: list[dict]) -> list[dict]:
     Convert LLM feedbackEvents (which have word_index but no timestamp)
     into pipeline events with actual timestamps looked up from the words array.
 
-    Called by job_runner.py after analyze_with_ollama().
+    Called by job_runner.py after analyze_with_llm().
     """
     word_map = {w["index"]: w for w in words}
     result = []
