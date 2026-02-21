@@ -15,7 +15,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from llm import analyze_with_ollama, map_llm_events
+from llm import (
+    analyze_with_ollama,
+    evaluate_follow_up_answer,
+    generate_follow_up_question,
+    map_llm_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,35 @@ class AnalyzeResponse(BaseModel):
     notes: list[str]
 
 
+class FollowUpQuestionRequest(BaseModel):
+    transcript: str = ""
+    summary_feedback: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+
+
+class FollowUpQuestionResponse(BaseModel):
+    question: str
+
+
+class FollowUpAnswerEvalRequest(BaseModel):
+    question: str
+    answer_transcript: str
+    presentation_transcript: str = ""
+    presentation_summary_feedback: list[str] = Field(default_factory=list)
+    presentation_strengths: list[str] = Field(default_factory=list)
+    presentation_improvements: list[str] = Field(default_factory=list)
+
+
+class FollowUpAnswerEvalResponse(BaseModel):
+    is_correct: bool
+    verdict: str
+    correctness_score: int = Field(ge=0, le=100)
+    reason: str
+    missing_points: list[str] = Field(default_factory=list)
+    suggested_improvement: str
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Presentation Coach API is running."}
@@ -104,6 +138,48 @@ async def root() -> dict[str, str]:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/followup-question", response_model=FollowUpQuestionResponse)
+async def followup_question(payload: FollowUpQuestionRequest) -> FollowUpQuestionResponse:
+    if (
+        not payload.transcript.strip()
+        and not payload.summary_feedback
+        and not payload.improvements
+        and not payload.strengths
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide transcript or feedback context to generate a follow-up question.",
+        )
+
+    question = generate_follow_up_question(
+        transcript=payload.transcript,
+        summary_feedback=payload.summary_feedback,
+        strengths=payload.strengths,
+        improvements=payload.improvements,
+    )
+    return FollowUpQuestionResponse(question=question)
+
+
+@app.post("/evaluate-followup-answer", response_model=FollowUpAnswerEvalResponse)
+async def evaluate_followup_answer(
+    payload: FollowUpAnswerEvalRequest,
+) -> FollowUpAnswerEvalResponse:
+    if not payload.question.strip():
+        raise HTTPException(status_code=400, detail="question is required.")
+    if not payload.answer_transcript.strip():
+        raise HTTPException(status_code=400, detail="answer_transcript is required.")
+
+    result = evaluate_follow_up_answer(
+        question=payload.question,
+        answer_transcript=payload.answer_transcript,
+        presentation_transcript=payload.presentation_transcript,
+        presentation_summary_feedback=payload.presentation_summary_feedback,
+        presentation_strengths=payload.presentation_strengths,
+        presentation_improvements=payload.presentation_improvements,
+    )
+    return FollowUpAnswerEvalResponse(**result)
 
 
 def tokenize(text: str) -> list[str]:
