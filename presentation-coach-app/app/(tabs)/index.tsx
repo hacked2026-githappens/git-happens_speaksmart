@@ -186,9 +186,19 @@ function ActionButton({ label, icon, onPress, disabled, tone = 'neutral' }: Acti
   );
 }
 
+const PRESETS = [
+  { key: 'general' as const, label: 'General', icon: 'mic-outline' as const },
+  { key: 'pitch' as const, label: 'Pitch', icon: 'trending-up-outline' as const },
+  { key: 'classroom' as const, label: 'Classroom', icon: 'school-outline' as const },
+  { key: 'interview' as const, label: 'Interview', icon: 'briefcase-outline' as const },
+  { key: 'keynote' as const, label: 'Keynote', icon: 'people-outline' as const },
+];
+
 export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const isDark = colorScheme === 'dark';
+
+  const [preset, setPreset] = useState<'general' | 'pitch' | 'classroom' | 'interview' | 'keynote'>('general');
 
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const player = useVideoPlayer(videoUri ?? '', (p) => {
@@ -523,6 +533,7 @@ export default function HomeScreen() {
       if (videoDuration != null && videoDuration > 0.5) {
         form.append('duration_seconds', videoDuration.toString());
       }
+      form.append('preset', preset);
 
       const result = await fetch(`${BACKEND_URL}/analyze`, {
         method: 'POST',
@@ -563,6 +574,7 @@ export default function HomeScreen() {
             feedback.llm?.improvements?.map(
               (item) => `${item.title}: ${item.detail}`,
             ) ?? [],
+          preset,
         }),
       });
 
@@ -808,6 +820,24 @@ export default function HomeScreen() {
                   <ThemedText style={styles.statusBadgeTextMuted}>Waiting for video</ThemedText>
                 </View>
               )}
+            </View>
+
+            <View style={styles.presetRow}>
+              {PRESETS.map(({ key, label, icon }) => {
+                const active = preset === key;
+                return (
+                  <Pressable
+                    key={key}
+                    onPress={() => { setPreset(key); setFeedback(null); resetFollowUpFlow(); }}
+                    style={[styles.presetPill, active && styles.presetPillActive]}
+                  >
+                    <Ionicons name={icon} size={13} color={active ? '#fff' : palette.accentDeep} />
+                    <ThemedText style={[styles.presetLabel, active && styles.presetLabelActive]}>
+                      {label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
             </View>
 
             {!!videoUri && (
@@ -1804,5 +1834,34 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     fontSize: 14,
     lineHeight: 21,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  presetPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'transparent',
+  },
+  presetPillActive: {
+    backgroundColor: palette.accent,
+    borderColor: palette.accent,
+  },
+  presetLabel: {
+    fontSize: 12,
+    fontFamily: Fonts.rounded,
+    color: palette.accentDeep,
+  },
+  presetLabelActive: {
+    color: '#fff',
   },
 });
