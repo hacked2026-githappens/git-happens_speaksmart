@@ -56,7 +56,13 @@ Rules:
 - filler_word_density score: 10 = no fillers detected, 1 = excessive fillers throughout
 - word_index in feedbackEvents must be an integer matching a [N] index from the transcript
 - Limit feedbackEvents to the 10 most important issues
-- strengths: 2-3 items; improvements: 2-4 items"""
+- strengths: 2-3 items; improvements: 2-4 items
+
+Non-verbal context rules (applies when a "--- Context ---" block is provided):
+- If activity_level is "unknown", do NOT mention gestures or body language anywhere in your response.
+- If activity_level is "low", include one improvement about using more deliberate hand gestures.
+- If activity_level is "moderate", acknowledge good physical engagement in strengths or body_feedback.
+- If activity_level is "high", note energetic delivery and suggest channeling gestures with intention."""
 
 
 def _safe_defaults() -> dict:
@@ -116,7 +122,22 @@ def _validate(data: dict) -> bool:
     return True
 
 
-def analyze_with_llm(words: list[dict]) -> dict:
+def _build_context_block(analysis_context: dict) -> str:
+    """Build a compact context string to append to the user message."""
+    nv = analysis_context.get("non_verbal", {})
+    lines = ["--- Context ---"]
+    lines.append(f"pace: {analysis_context.get('pace_label', 'unknown')} ({analysis_context.get('words_per_minute', '?')} WPM)")
+    lines.append(f"filler_words: {analysis_context.get('filler_word_count', 0)} total")
+    lines.append(
+        f"non_verbal: gesture_energy={nv.get('gesture_energy', 'unknown')}, "
+        f"activity_level={nv.get('activity_level', 'unknown')}, "
+        f"avg_velocity={nv.get('avg_velocity', 'unknown')}, "
+        f"samples={nv.get('samples', 0)}"
+    )
+    return "\n".join(lines)
+
+
+def analyze_with_llm(words: list[dict], analysis_context: dict | None = None) -> dict:
     """
     Call Groq API with the indexed transcript and return coaching results.
 
@@ -124,6 +145,9 @@ def analyze_with_llm(words: list[dict]) -> dict:
 
     Args:
         words: list of {"word": str, "start": float, "end": float, "index": int}
+        analysis_context: optional dict with keys: pace_label, words_per_minute,
+                          filler_word_count, non_verbal (gesture_energy, activity_level,
+                          avg_velocity, samples)
 
     Returns:
         dict with keys: scores, strengths, improvements, structure, feedbackEvents, stats
@@ -146,9 +170,14 @@ def analyze_with_llm(words: list[dict]) -> dict:
     if was_truncated:
         indexed_transcript += f" [...transcript truncated at {MAX_TRANSCRIPT_WORDS} words]"
 
+    if analysis_context:
+        user_content = indexed_transcript + "\n\n" + _build_context_block(analysis_context)
+    else:
+        user_content = indexed_transcript
+
     messages = [
         {"role": "system", "content": COACH_SYSTEM_PROMPT},
-        {"role": "user", "content": indexed_transcript},
+        {"role": "user", "content": user_content},
     ]
 
     # First attempt
@@ -197,8 +226,9 @@ def analyze_with_llm(words: list[dict]) -> dict:
     return _safe_defaults()
 
 
-# Keep old name as alias so main.py import doesn't break
-analyze_with_ollama = analyze_with_llm
+def analyze_with_ollama(words: list[dict], analysis_context: dict | None = None) -> dict:
+    """Backward-compatible alias for analyze_with_llm."""
+    return analyze_with_llm(words, analysis_context)
 
 
 def map_llm_events(llm_events: list[dict], words: list[dict]) -> list[dict]:
