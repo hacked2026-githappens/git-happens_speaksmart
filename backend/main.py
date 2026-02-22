@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -90,6 +91,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _preload_whisper() -> None:
+    """Warm up the Whisper model at startup so the first analysis request doesn't pay the load cost."""
+    try:
+        await asyncio.to_thread(get_whisper_model)
+        logger.info("Whisper model preloaded successfully.")
+    except Exception as exc:
+        logger.warning("Whisper model preload failed (will load on first request): %s", exc)
+
 
 FILLER_WORDS = {
     "um",
@@ -817,11 +829,14 @@ def analyze_silence_quality(words: list[dict]) -> dict[str, Any]:
     }
 
 
-def analyze_audio_delivery(
-    media_path: Path,
+def analyze_audio_delivery_from_samples(
+    samples: Any,
+    sample_rate: int,
     words: list[dict],
     duration_seconds: float,
 ) -> tuple[dict[str, Any], list[str]]:
+    """Run audio delivery DSP analysis on pre-extracted audio samples."""
+    notes: list[str] = []
     base = {
         "monotone": {
             "label": "unknown",
@@ -842,8 +857,6 @@ def analyze_audio_delivery(
         },
         "silence": analyze_silence_quality(words),
     }
-
-    samples, sample_rate, notes = extract_audio_samples_for_analysis(media_path)
     if samples is None:
         return base, notes
 
@@ -852,6 +865,18 @@ def analyze_audio_delivery(
     if base["monotone"]["label"] == "unknown":
         notes.append("Could not estimate pitch variation confidently for this recording.")
     return base, notes
+
+
+def analyze_audio_delivery(
+    media_path: Path,
+    words: list[dict],
+    duration_seconds: float,
+) -> tuple[dict[str, Any], list[str]]:
+    samples, sample_rate, notes = extract_audio_samples_for_analysis(media_path)
+    delivery, delivery_notes = analyze_audio_delivery_from_samples(
+        samples, sample_rate, words, duration_seconds
+    )
+    return delivery, [*notes, *delivery_notes]
 
 
 def build_timeline_markers(metrics: dict[str, Any]) -> list[TimelineMarker]:
