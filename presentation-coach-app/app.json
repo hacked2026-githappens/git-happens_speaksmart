@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "presentation-coach-app",
-    "slug": "presentation-coach-app",
+    "name": "SpeakSmart",
+    "slug": "speaksmart",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "presentationcoachapp",
+    "scheme": "speaksmart",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

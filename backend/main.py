@@ -11,10 +11,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from supabase import Client as SupabaseClient
+from supabase import create_client
 from pydantic import BaseModel, Field
 
+from job_runner import run_analysis_job
 from llm import (
     analyze_with_ollama,
     evaluate_follow_up_answer,
@@ -24,6 +27,19 @@ from llm import (
 from non_verbal.vision import analyze_nonverbal
 
 logger = logging.getLogger(__name__)
+
+_supabase: SupabaseClient | None = None
+
+
+def get_supabase() -> SupabaseClient:
+    global _supabase
+    if _supabase is None:
+        url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        key = os.getenv("SUPABASE_SERVICE_KEY", "")
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+        _supabase = create_client(url, key)
+    return _supabase
 
 
 def bootstrap_ffmpeg_path() -> None:
@@ -53,7 +69,7 @@ def bootstrap_ffmpeg_path() -> None:
 bootstrap_ffmpeg_path()
 
 app = FastAPI(
-    title="Presentation Coach API",
+    title="SpeakSmart API",
     version="0.1.0",
     description="Analyze recorded speaking sessions and return coaching feedback.",
 )
@@ -134,7 +150,7 @@ class FollowUpAnswerEvalResponse(BaseModel):
 
 @app.get("/")
 async def root() -> dict[str, str]:
-    return {"message": "Presentation Coach API is running."}
+    return {"message": "SpeakSmart API is running."}
 
 
 @app.get("/health")
@@ -494,3 +510,46 @@ async def analyze_session(
         except OSError:
             logger.warning("Failed to delete temp file %s", temp_path)
         await file.close()
+
+
+@app.post("/api/analyze")
+async def create_analysis_job(
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    duration_seconds: float | None = Form(default=None),
+    preset: str = Form(default="general"),
+) -> dict:
+    ensure_supported_media(video)
+    temp_path = save_upload_to_temp(video)
+    supabase = get_supabase()
+    response = supabase.table("jobs").insert({"status": "pending"}).execute()
+    job_id = response.data[0]["id"]
+    background_tasks.add_task(
+        run_analysis_job,
+        job_id=job_id,
+        temp_path=temp_path,
+        duration_seconds=duration_seconds,
+        preset=preset,
+        supabase=supabase,
+    )
+    return {"jobId": job_id}
+
+
+@app.get("/api/results/{job_id}")
+async def get_analysis_results(job_id: str) -> dict:
+    supabase = get_supabase()
+    response = (
+        supabase.table("jobs")
+        .select("status,results,error_message")
+        .eq("id", job_id)
+        .single()
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    row = response.data
+    if row["status"] in ("pending", "processing"):
+        return {"status": row["status"]}
+    if row["status"] == "done":
+        return {"status": "done", "results": row["results"]}
+    return {"status": "error", "error_message": row.get("error_message", "Unknown error")}

@@ -537,10 +537,10 @@ export default function HomeScreen() {
       if (Platform.OS === 'web') {
         const response = await fetch(videoUri);
         const blob = await response.blob();
-        form.append('file', blob, 'practice.mp4');
+        form.append('video', blob, 'practice.mp4');
       } else {
         form.append(
-          'file',
+          'video',
           {
             uri: videoUri,
             name: 'practice.mp4',
@@ -554,7 +554,7 @@ export default function HomeScreen() {
       }
       form.append('preset', preset);
 
-      const result = await fetch(`${BACKEND_URL}/analyze`, {
+      const result = await fetch(`${BACKEND_URL}/api/analyze`, {
         method: 'POST',
         body: form,
       });
@@ -565,7 +565,23 @@ export default function HomeScreen() {
         return;
       }
 
-      const api = await result.json();
+      const { jobId } = await result.json();
+
+      const pollResults = async (id: string): Promise<any> => {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const poll = await fetch(`${BACKEND_URL}/api/results/${id}`);
+          if (!poll.ok) throw new Error(`Poll failed (${poll.status})`);
+          const data = await poll.json();
+          if (data.status === 'done') return data.results;
+          if (data.status === 'error')
+            throw new Error(data.error_message ?? 'Analysis failed on server');
+          // pending or processing → keep polling
+        }
+        throw new Error('Analysis timed out after 4 minutes. Please try again.');
+      };
+
+      const api = await pollResults(jobId);
       const mapped = mapAnalyzePayload(api);
       setFeedback(mapped);
       setShowContentPlan(false);
