@@ -6,6 +6,8 @@ import { AnimatedAuroraBackground } from '@/components/animated-aurora-backgroun
 import { ThemedText } from '@/components/themed-text';
 import { Fonts } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth';
+import { clearWebCoachDraft } from '@/lib/web-coach-draft';
+import { clearWebVideoDraft } from '@/lib/web-video-draft';
 
 export default function LogoutScreen() {
   const { signOut } = useAuth();
@@ -14,6 +16,10 @@ export default function LogoutScreen() {
   useEffect(() => {
     const run = async () => {
       try {
+        if (typeof window !== 'undefined') {
+          clearWebCoachDraft();
+          await clearWebVideoDraft().catch(() => {});
+        }
         await signOut();
       } finally {
         router.replace('/');
