@@ -665,6 +665,41 @@ export default function HomeScreen() {
 
       // Fire-and-forget: save session to Supabase if user is logged in
       if (user) {
+        const nonVerbalMetrics = api.metrics?.non_verbal ?? null;
+        const annotatedVideoMeta =
+          videoUri && mapped.markers?.length
+            ? {
+                source_uri: videoUri,
+                source_name: videoName || null,
+                markers: mapped.markers.map((marker) => ({
+                  time_sec: marker.time_sec,
+                  label: marker.label,
+                  detail: marker.detail ?? null,
+                })),
+              }
+            : null;
+        const analysisSnapshot = {
+          preset,
+          source_video: videoUri
+            ? {
+                uri: videoUri,
+                name: videoName || null,
+                duration_s: videoDuration ?? null,
+              }
+            : null,
+          summary: mapped.summary ?? null,
+          summary_feedback: Array.isArray(api.summary_feedback) ? api.summary_feedback : [],
+          bullets: Array.isArray(mapped.bullets) ? mapped.bullets : [],
+          markers: Array.isArray(mapped.markers) ? mapped.markers : [],
+          notes: Array.isArray(api.notes) ? api.notes : [],
+          transcript: api.transcript ?? null,
+          metrics: api.metrics ?? null,
+          llm_analysis: api.llm_analysis ?? null,
+          personalized_content_plan: api.personalized_content_plan ?? null,
+          raw_api_response: api ?? null,
+          mapped_feedback: mapped ?? null,
+          saved_at: new Date().toISOString(),
+        };
         saveSession(user.id, {
           preset,
           duration_s: api.metrics?.duration_seconds ?? null,
@@ -675,7 +710,14 @@ export default function HomeScreen() {
           strengths: api.llm_analysis?.strengths ?? null,
           improvements: api.llm_analysis?.improvements ?? null,
           transcript: api.transcript ?? null,
-          non_verbal: api.metrics?.non_verbal ?? null,
+          non_verbal:
+            nonVerbalMetrics || annotatedVideoMeta || analysisSnapshot
+              ? {
+                  ...(nonVerbalMetrics ?? {}),
+                  annotated_video: annotatedVideoMeta,
+                  analysis_snapshot: analysisSnapshot,
+                }
+              : null,
         }).catch(() => {
           // Silent — session saving is best-effort
         });
