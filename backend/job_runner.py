@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from llm import analyze_with_llm, map_llm_events
+from llm import analyze_with_llm, generate_content_specific_plan, map_llm_events
 from non_verbal.vision import analyze_nonverbal
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,14 @@ async def run_analysis_job(
         llm_events = map_llm_events(llm_result.get("feedbackEvents", []), words)
         llm_result["feedbackEvents"] = llm_events
 
+        content_plan = await asyncio.to_thread(
+            generate_content_specific_plan,
+            transcript,
+            build_summary_feedback(metrics),
+            llm_result.get("improvements", []),
+            preset,
+        )
+
         results: dict[str, Any] = {
             # AGENTS.md spec keys
             "words": words,
@@ -78,6 +86,7 @@ async def run_analysis_job(
             "markers": [m.model_dump() for m in build_timeline_markers(metrics)],
             "llm_analysis": llm_result,
             "metrics": metrics,
+            "personalized_content_plan": content_plan,
         }
 
         supabase.table("jobs").update({"status": "done", "results": results}).eq("id", job_id).execute()
