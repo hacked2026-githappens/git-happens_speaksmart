@@ -381,6 +381,33 @@ export default function HomeScreen() {
     ];
   }, [feedback]);
 
+  const audioInsights = useMemo(() => {
+    const audio = feedback?.metrics?.audio_delivery;
+    if (!audio) {
+      return null;
+    }
+
+    const monotone = audio.monotone ?? {};
+    const volume = audio.volume ?? {};
+    const silence = audio.silence ?? {};
+
+    return {
+      monotoneLabel: monotone.label ?? 'unknown',
+      pitchSemitoneStd:
+        typeof monotone.pitch_std_semitones === 'number'
+          ? monotone.pitch_std_semitones
+          : null,
+      volumeLabel: volume.consistency_label ?? 'unknown',
+      tooQuiet: !!volume.too_quiet,
+      trailingEvents:
+        typeof volume.trailing_off_events === 'number' ? volume.trailing_off_events : 0,
+      effectivePauses:
+        typeof silence.effective_pauses === 'number' ? silence.effective_pauses : 0,
+      awkwardSilences:
+        typeof silence.awkward_silences === 'number' ? silence.awkward_silences : 0,
+    };
+  }, [feedback]);
+
   const answerPaceState = useMemo(() => {
     const wordsPerMinute = answerFeedback?.metrics?.words_per_minute;
     if (typeof wordsPerMinute !== 'number') {
@@ -982,6 +1009,97 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.paceBarContainer}>
                     <View style={[styles.paceBarFill, { width: `${paceState.percent * 100}%`, backgroundColor: paceState.color }]} />
+                  </View>
+                </View>
+              )}
+
+              {!!audioInsights && (
+                <View style={[styles.audioPanel, isDark && styles.audioPanelDark]}>
+                  <View style={styles.audioHeaderRow}>
+                    <Ionicons name="volume-high-outline" size={18} color={palette.accentDeep} />
+                    <ThemedText style={styles.audioHeaderTitle}>Audio & tonal analysis</ThemedText>
+                  </View>
+                  <ThemedText style={styles.audioGuideText}>
+                    Monotone checks pitch variation, Volume checks projection consistency, and Pauses
+                    compares strategic pauses vs mid-sentence silences.
+                  </ThemedText>
+
+                  <View style={styles.audioChipRow}>
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Monotone</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          {
+                            color:
+                              audioInsights.monotoneLabel === 'monotone'
+                                ? '#d1652c'
+                                : audioInsights.monotoneLabel === 'dynamic'
+                                ? '#17998a'
+                                : palette.accentDeep,
+                          },
+                        ]}>
+                        {audioInsights.monotoneLabel === 'monotone'
+                          ? 'Flagged'
+                          : audioInsights.monotoneLabel === 'dynamic'
+                          ? 'Dynamic'
+                          : 'Unknown'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Low variation sounds flat; dynamic variation keeps attention.
+                      </ThemedText>
+                      {typeof audioInsights.pitchSemitoneStd === 'number' && (
+                        <ThemedText style={styles.audioChipMeta}>
+                          {audioInsights.pitchSemitoneStd.toFixed(2)} stdev semitones
+                        </ThemedText>
+                      )}
+                    </View>
+
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Volume</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          {
+                            color:
+                              audioInsights.volumeLabel === 'consistent'
+                                ? '#17998a'
+                                : audioInsights.tooQuiet
+                                ? '#d1652c'
+                                : palette.accentDeep,
+                          },
+                        ]}>
+                        {audioInsights.volumeLabel === 'too_quiet'
+                          ? 'Too quiet'
+                          : audioInsights.volumeLabel === 'consistent'
+                          ? 'Consistent'
+                          : 'Needs work'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Detects quiet speech and whether sentence endings fade out.
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipMeta}>
+                        {audioInsights.trailingEvents} trailing-off event
+                        {audioInsights.trailingEvents === 1 ? '' : 's'}
+                      </ThemedText>
+                    </View>
+
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Pauses</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          { color: audioInsights.awkwardSilences > 0 ? '#d1652c' : '#17998a' },
+                        ]}>
+                        {audioInsights.awkwardSilences > 0 ? 'Awkward silences' : 'Effective'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Effective pauses happen after complete thoughts, not mid-sentence.
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipMeta}>
+                        {audioInsights.effectivePauses} effective · {audioInsights.awkwardSilences} awkward
+                      </ThemedText>
+                    </View>
                   </View>
                 </View>
               )}
@@ -1658,6 +1776,77 @@ const styles = StyleSheet.create({
   paceBarFill: {
     height: '100%',
     borderRadius: 99,
+  },
+  audioPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.48)',
+    paddingVertical: 13,
+    paddingHorizontal: 13,
+    gap: 12,
+  },
+  audioPanelDark: {
+    backgroundColor: 'rgba(16, 12, 9, 0.68)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  audioHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  audioHeaderTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  audioGuideText: {
+    fontSize: 13,
+    lineHeight: 19,
+    opacity: 0.86,
+  },
+  audioChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  audioChip: {
+    minWidth: 220,
+    flexGrow: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    paddingVertical: 11,
+    paddingHorizontal: 11,
+    gap: 5,
+  },
+  audioChipDark: {
+    backgroundColor: 'rgba(23, 18, 13, 0.76)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  audioChipLabel: {
+    fontSize: 12,
+    lineHeight: 15,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontFamily: Fonts.rounded,
+  },
+  audioChipValue: {
+    fontFamily: Fonts.rounded,
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  audioChipHelp: {
+    fontSize: 12,
+    lineHeight: 17,
+    opacity: 0.84,
+  },
+  audioChipMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.76,
   },
   scoreGrid: {
     flexDirection: 'row',
