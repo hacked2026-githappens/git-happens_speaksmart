@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -215,6 +216,175 @@ async def evaluate_followup_answer(
         presentation_improvements=payload.presentation_improvements,
     )
     return FollowUpAnswerEvalResponse(**result)
+
+
+# ── Static content for drill modes ────────────────────────────────────────────
+
+_READING_PARAGRAPHS = [
+    {
+        "title": "The Deep Ocean",
+        "text": (
+            "The deep ocean remains one of the least explored places on Earth. "
+            "Scientists estimate that more than eighty percent of our oceans have never been mapped or observed. "
+            "Strange and wondrous creatures live miles beneath the surface, adapted to crushing pressure and total darkness. "
+            "Every expedition into the deep returns with discoveries that challenge what we thought we knew about life on this planet."
+        ),
+    },
+    {
+        "title": "The Art of Listening",
+        "text": (
+            "Most people do not listen with the intent to understand — they listen with the intent to reply. "
+            "True listening requires patience, presence, and a willingness to set aside your own assumptions. "
+            "When someone feels genuinely heard, it builds trust faster than almost anything else you can do. "
+            "The best communicators in any field are, first and foremost, exceptional listeners."
+        ),
+    },
+    {
+        "title": "Morning Light",
+        "text": (
+            "There is something quietly powerful about the first hour of the day before the rest of the world wakes up. "
+            "The light is softer, the air is still, and your mind has not yet been pulled in a dozen directions. "
+            "Many writers, athletes, and leaders guard this time fiercely, treating it as the most productive part of their day. "
+            "How you begin the morning often shapes the entire tone of what follows."
+        ),
+    },
+    {
+        "title": "The Science of Sleep",
+        "text": (
+            "Sleep is not a passive state — your brain is remarkably active while you rest. "
+            "During deep sleep, memories are consolidated, waste products are cleared from neural tissue, and the body repairs itself at a cellular level. "
+            "Chronic sleep deprivation is linked to impaired judgment, weakened immunity, and increased risk of serious disease. "
+            "Despite this, modern culture often treats sleep as an inconvenience rather than a biological necessity."
+        ),
+    },
+    {
+        "title": "Cities After Dark",
+        "text": (
+            "A city at night reveals a different character than it shows by day. "
+            "The crowds thin out, the neon signs reflect off wet pavements, and the usual urgency of urban life softens into something more contemplative. "
+            "Night workers, street vendors, and late-night wanderers occupy a version of the city that most people never see. "
+            "There is a quiet beauty in these hours that belongs entirely to those willing to stay awake for it."
+        ),
+    },
+    {
+        "title": "The Power of Small Habits",
+        "text": (
+            "Dramatic transformations rarely happen overnight. "
+            "More often, they are the invisible result of small decisions compounded over months and years. "
+            "A person who reads ten pages each day will finish dozens of books by year's end. "
+            "A person who walks for twenty minutes each morning will, in time, transform their health. "
+            "The habits that shape us most profoundly are usually the ones so modest they barely seem worth noticing."
+        ),
+    },
+    {
+        "title": "What Leaders Actually Do",
+        "text": (
+            "Leadership is far less about authority than most people assume. "
+            "The most effective leaders spend the majority of their time asking questions, removing obstacles for their teams, and creating conditions where talented people can do their best work. "
+            "They are clear about direction but humble about method, knowing that the people closest to the problem usually have the best solutions. "
+            "Genuine influence is earned, not assigned."
+        ),
+    },
+    {
+        "title": "The Changing Climate",
+        "text": (
+            "Climate change is not a distant threat — its effects are already reshaping ecosystems, agriculture, and coastal communities around the world. "
+            "Rising temperatures are altering migration patterns, intensifying storms, and accelerating the melting of polar ice. "
+            "The decisions made in the next decade will determine the severity of changes that unfold over the next century. "
+            "Understanding the science is the first step toward meaningful action."
+        ),
+    },
+    {
+        "title": "Technology and Connection",
+        "text": (
+            "We have never been more connected to information, and yet many people report feeling more isolated than ever before. "
+            "Smartphones allow us to reach anyone on earth instantly, but they also fragment attention and replace face-to-face moments with curated highlights. "
+            "The challenge of our era is not building faster networks, but learning to use the networks we have in ways that genuinely bring us closer together."
+        ),
+    },
+    {
+        "title": "The Value of Failure",
+        "text": (
+            "Failure is not the opposite of success — it is part of the process. "
+            "Every expert in any field has a history of mistakes that shaped their competence. "
+            "The difference between those who improve and those who stagnate is not talent, but the willingness to examine what went wrong and try again with new understanding. "
+            "A culture that punishes failure too harshly ends up punishing the curiosity that drives growth."
+        ),
+    },
+]
+
+_TOPIC_PROMPTS = [
+    {
+        "topic": "A skill you wish you had learned earlier",
+        "prompt": "Talk about a skill — practical, creative, or interpersonal — that you now wish someone had taught you sooner. Why does it matter to you?",
+    },
+    {
+        "topic": "Your ideal morning routine",
+        "prompt": "Describe what your perfect morning looks like from the moment you wake up. What habits or rituals would it include, and why?",
+    },
+    {
+        "topic": "A book, film, or show that changed your perspective",
+        "prompt": "Tell us about a piece of media that genuinely shifted how you see the world, other people, or yourself. What made it so impactful?",
+    },
+    {
+        "topic": "The most important quality in a leader",
+        "prompt": "If you had to name just one quality that separates great leaders from average ones, what would it be? Make your case.",
+    },
+    {
+        "topic": "A challenge you overcame",
+        "prompt": "Share a time when you faced a significant obstacle — professional, personal, or academic. How did you get through it, and what did it teach you?",
+    },
+    {
+        "topic": "What 'success' means to you",
+        "prompt": "Define success in your own terms. How has your definition changed over time, and what benchmarks actually matter to you now?",
+    },
+    {
+        "topic": "The role of technology in everyday life",
+        "prompt": "How has technology changed the way you work, communicate, or spend your free time? Are those changes mostly positive or negative, in your view?",
+    },
+    {
+        "topic": "A place you would love to visit",
+        "prompt": "Describe a place — city, country, or natural landscape — that you have always wanted to experience. What draws you to it?",
+    },
+    {
+        "topic": "How you stay motivated when things get hard",
+        "prompt": "Walk us through your real strategies for maintaining momentum when a project, relationship, or goal feels like it is stalling.",
+    },
+    {
+        "topic": "The biggest lesson from the past year",
+        "prompt": "Looking back at the last twelve months, what is the single most valuable thing you have learned — about yourself, others, or the world?",
+    },
+    {
+        "topic": "What makes a great team",
+        "prompt": "Based on your experience, what ingredients consistently separate high-performing teams from ones that struggle? Be specific.",
+    },
+    {
+        "topic": "If you could change one thing about education",
+        "prompt": "What is the biggest gap or flaw in the way we educate people today? What would you change, and how would it make a difference?",
+    },
+    {
+        "topic": "The impact of social media on communication",
+        "prompt": "Has social media made us better or worse communicators? Argue your position with examples from everyday life.",
+    },
+    {
+        "topic": "An everyday object you are grateful for",
+        "prompt": "Pick something ordinary — a tool, appliance, or material — and make a compelling case for why it deserves far more appreciation than it gets.",
+    },
+    {
+        "topic": "Your favourite season and why",
+        "prompt": "Make an enthusiastic argument for one season of the year. What do you love about how it looks, feels, and what it makes possible?",
+    },
+]
+
+
+@app.get("/random-paragraph")
+def get_random_paragraph() -> dict:
+    return random.choice(_READING_PARAGRAPHS)
+
+
+@app.get("/random-topic")
+def get_random_topic() -> dict:
+    return random.choice(_TOPIC_PROMPTS)
 
 
 def tokenize(text: str) -> list[str]:
