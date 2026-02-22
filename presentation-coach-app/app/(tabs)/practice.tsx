@@ -4,13 +4,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
 import { Fonts } from '@/constants/theme';
 
 export default function PracticeScreen() {
   const router = useRouter();
 
   return (
-    <View style={styles.root}>
+    <ThemedView style={styles.root} lightColor="#141d3f" darkColor="#141d3f">
+      <View style={styles.backGlowTop} />
+      <View style={styles.backGlowBottom} />
       <View style={styles.card}>
         <View style={styles.iconWrap}>
           <Ionicons name="radio-outline" size={24} color="#45d8df" />
@@ -28,7 +31,7 @@ export default function PracticeScreen() {
           <ThemedText style={styles.buttonText}>Open Coach</ThemedText>
         </Pressable>
       </View>
-    </View>
+    </ThemedView>
   );
 }
 
@@ -36,18 +39,38 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     padding: 22,
+    justifyContent: 'center',
+    backgroundColor: '#141d3f',
+  },
+  backGlowTop: {
+    position: 'absolute',
+    top: -140,
+    left: -100,
+    width: 320,
+    height: 320,
+    borderRadius: 999,
+    backgroundColor: 'rgba(39, 103, 211, 0.12)',
+  },
+  backGlowBottom: {
+    position: 'absolute',
+    right: -120,
+    bottom: -160,
+    width: 380,
+    height: 380,
+    borderRadius: 999,
+    backgroundColor: 'rgba(42, 192, 168, 0.12)',
   },
   card: {
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 920,
     alignSelf: 'center',
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(108, 143, 208, 0.36)',
-    backgroundColor: 'rgba(24, 38, 77, 0.65)',
-    padding: 22,
+    backgroundColor: 'rgba(24, 38, 77, 0.72)',
+    padding: 28,
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
   },
   iconWrap: {
     width: 52,
@@ -60,7 +83,7 @@ const styles = StyleSheet.create({
   title: {
     color: '#e8f4ff',
     fontFamily: Fonts.rounded,
-    fontSize: 28,
+    fontSize: 32,
   },
   subtitle: {
     color: '#a9bfdc',
