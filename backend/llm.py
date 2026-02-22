@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -121,6 +122,36 @@ Evaluation rules:
 - Do not add extra keys.
 - No markdown and no explanation text outside JSON."""
 
+CONTENT_IMPROVEMENTS_SYSTEM_PROMPT = """You are a presentation coach focused on CONTENT quality.
+
+You receive:
+- transcript excerpt
+- summary feedback
+- prior generic improvements
+- presentation preset
+
+Return ONLY valid JSON with this exact shape:
+{
+  "topic_summary": "<one concise sentence describing the topic and claim>",
+  "audience_takeaway": "<one sentence for what the audience should remember or do>",
+  "improvements": [
+    {
+      "title": "<short improvement title>",
+      "content_issue": "<what is weak in this specific transcript>",
+      "specific_fix": "<how to fix it with topic-specific guidance>",
+      "example_revision": "<1-2 sentence rewrite/example tailored to this topic>"
+    }
+  ]
+}
+
+Rules:
+- Infer the topic from transcript content first.
+- Keep improvements specific to this topic and claims.
+- Prioritize content logic, evidence quality, specificity, and audience relevance.
+- Do NOT focus on delivery mechanics (pace, fillers, body language) unless the transcript topic itself is about delivery.
+- Return 3-4 improvements.
+- No markdown. No extra keys. No text outside JSON."""
+
 
 PRESET_CONTEXT: dict[str, str] = {
     "general": "",
@@ -199,6 +230,56 @@ def _strip_and_parse(raw: str) -> dict | None:
         return None
 
 
+def _extract_json_candidate(raw: str) -> str:
+    text = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+    text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    return match.group(0) if match else text
+
+
+def _parse_relaxed_json(raw: str) -> dict | None:
+    """Best-effort parser for imperfect model JSON output."""
+    parsed = _strip_and_parse(raw)
+    if isinstance(parsed, dict):
+        return parsed
+
+    candidate = _extract_json_candidate(raw)
+    if not candidate:
+        return None
+
+    repaired = candidate
+    repaired = repaired.replace("\u201c", '"').replace("\u201d", '"')
+    repaired = repaired.replace("\u2018", "'").replace("\u2019", "'")
+    repaired = repaired.replace("\\'", "'")
+    repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+    repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", repaired)
+
+    try:
+        parsed = json.loads(repaired)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: parse as Python-like dict
+    python_like = repaired
+    python_like = re.sub(r"\btrue\b", "True", python_like, flags=re.IGNORECASE)
+    python_like = re.sub(r"\bfalse\b", "False", python_like, flags=re.IGNORECASE)
+    python_like = re.sub(r"\bnull\b", "None", python_like, flags=re.IGNORECASE)
+    try:
+        parsed = ast.literal_eval(python_like)
+        if isinstance(parsed, dict):
+            return parsed
+    except (ValueError, SyntaxError):
+        return None
+    return None
+
+
+def _is_json_validation_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "json_validate_failed" in text or "failed to generate json" in text
+
+
 def _validate(data: dict) -> bool:
     """Check all required top-level keys and score sub-keys are present."""
     required_keys = {"scores", "strengths", "improvements", "structure", "feedbackEvents", "stats"}
@@ -249,6 +330,79 @@ def _safe_follow_up_answer_eval_defaults() -> dict:
         "reason": "Could not confidently evaluate the answer with the available information.",
         "missing_points": [],
         "suggested_improvement": "Answer the question directly and include one concrete supporting detail.",
+    }
+
+
+def _safe_content_plan_defaults(transcript: str) -> dict:
+    excerpt = " ".join((transcript or "").split()[:18]).strip()
+    topic_summary = excerpt if excerpt else "Topic could not be inferred from the transcript."
+    return {
+        "topic_summary": topic_summary[:160],
+        "audience_takeaway": "State one clear claim and support it with one concrete evidence point.",
+        "improvements": [
+            {
+                "title": "Clarify the core claim",
+                "content_issue": "The main argument is not explicit enough early in the talk.",
+                "specific_fix": "Open with one direct thesis sentence, then support it with two concrete points.",
+                "example_revision": "My main point is X because of Y and Z. First, ... Second, ...",
+            },
+            {
+                "title": "Strengthen supporting evidence",
+                "content_issue": "Some statements are broad and not anchored in specific proof.",
+                "specific_fix": "Add one number, example, or case detail for each major claim.",
+                "example_revision": "Instead of saying 'this works well,' cite one concrete result and why it matters.",
+            },
+            {
+                "title": "Tighten audience takeaway",
+                "content_issue": "The ending does not clearly tell the audience what to remember or do next.",
+                "specific_fix": "Close with one action-oriented takeaway linked to your main claim.",
+                "example_revision": "So the key action is ____, because it directly improves ____ for ____.",
+            },
+        ],
+    }
+
+
+def _validate_content_plan(data: dict) -> bool:
+    required = {"topic_summary", "audience_takeaway", "improvements"}
+    if not required.issubset(data.keys()):
+        logger.warning("Content plan missing keys: %s", required - data.keys())
+        return False
+
+    if not isinstance(data.get("topic_summary"), str):
+        return False
+    if not isinstance(data.get("audience_takeaway"), str):
+        return False
+    improvements = data.get("improvements")
+    if not isinstance(improvements, list) or not improvements:
+        return False
+
+    for item in improvements[:4]:
+        if not isinstance(item, dict):
+            return False
+        for key in ("title", "content_issue", "specific_fix", "example_revision"):
+            if not isinstance(item.get(key), str):
+                return False
+    return True
+
+
+def _normalize_content_plan(data: dict) -> dict:
+    improvements = []
+    for item in (data.get("improvements") or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        improvements.append(
+            {
+                "title": str(item.get("title", "")).strip(),
+                "content_issue": str(item.get("content_issue", "")).strip(),
+                "specific_fix": str(item.get("specific_fix", "")).strip(),
+                "example_revision": str(item.get("example_revision", "")).strip(),
+            }
+        )
+
+    return {
+        "topic_summary": str(data.get("topic_summary", "")).strip(),
+        "audience_takeaway": str(data.get("audience_takeaway", "")).strip(),
+        "improvements": improvements,
     }
 
 
@@ -457,6 +611,97 @@ def analyze_with_llm(words: list[dict], analysis_context: dict | None = None, pr
         logger.error("Groq retry failed: %s", exc)
 
     return _safe_defaults()
+
+
+def generate_content_specific_plan(
+    transcript: str,
+    summary_feedback: list[str] | None = None,
+    llm_improvements: list[dict] | None = None,
+    preset: str = "general",
+) -> dict:
+    if not transcript.strip():
+        return _safe_content_plan_defaults(transcript)
+
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        logger.error("GROQ_API_KEY not set")
+        return _safe_content_plan_defaults(transcript)
+
+    transcript_excerpt = " ".join((transcript or "").split()[:1400]).strip()
+    payload = {
+        "transcript_excerpt": transcript_excerpt,
+        "summary_feedback": (summary_feedback or [])[:5],
+        "prior_improvements": [
+            {
+                "title": str(item.get("title", "")),
+                "detail": str(item.get("detail", "")),
+                "actionable_tip": str(item.get("actionable_tip", "")),
+            }
+            for item in (llm_improvements or [])[:5]
+            if isinstance(item, dict)
+        ],
+        "preset": preset,
+    }
+    preset_blurb = PRESET_CONTEXT.get(preset, "")
+    if preset_blurb:
+        payload["context"] = preset_blurb
+
+    client = Groq(api_key=api_key)
+    messages = [
+        {"role": "system", "content": CONTENT_IMPROVEMENTS_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload)},
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            response_format={"type": "json_object"},
+            max_tokens=900,
+            temperature=0.2,
+        )
+        raw = response.choices[0].message.content or ""
+        parsed = _parse_relaxed_json(raw)
+        if parsed and _validate_content_plan(parsed):
+            return _normalize_content_plan(parsed)
+        logger.warning("Content-specific plan first response could not be validated. Raw snippet: %s", raw[:280])
+    except Exception as exc:
+        if _is_json_validation_error(exc):
+            logger.warning("Content-specific plan first attempt failed JSON validation; retrying with relaxed mode.")
+        else:
+            logger.error("Content-specific plan failed on first attempt: %s", exc)
+
+    try:
+        retry_messages = messages + [
+            {
+                "role": "user",
+                "content": (
+                    "Return ONLY a single JSON object. No markdown fences. "
+                    "Keep strings simple and avoid apostrophes. "
+                    "Required keys: topic_summary, audience_takeaway, improvements[].title, "
+                    "improvements[].content_issue, improvements[].specific_fix, "
+                    "improvements[].example_revision."
+                ),
+            }
+        ]
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=retry_messages,
+            max_tokens=900,
+            temperature=0.1,
+        )
+        raw = response.choices[0].message.content or ""
+        parsed = _parse_relaxed_json(raw)
+        if parsed and _validate_content_plan(parsed):
+            return _normalize_content_plan(parsed)
+        logger.warning("Content-specific plan retry returned unparseable/invalid JSON. Raw snippet: %s", raw[:280])
+    except Exception as exc:
+        if _is_json_validation_error(exc):
+            logger.warning("Content-specific plan retry hit JSON validation error.")
+        else:
+            logger.error("Content-specific plan retry failed: %s", exc)
+
+    return _safe_content_plan_defaults(transcript)
 
 
 def generate_follow_up_question(

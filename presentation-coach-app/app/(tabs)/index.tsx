@@ -54,6 +54,19 @@ type LLMAnalysis = {
   stats: { flagged_sentences: number };
 };
 
+type ContentSpecificImprovement = {
+  title: string;
+  content_issue: string;
+  specific_fix: string;
+  example_revision: string;
+};
+
+type PersonalizedContentPlan = {
+  topic_summary: string;
+  audience_takeaway: string;
+  improvements: ContentSpecificImprovement[];
+};
+
 type CoachResponse = {
   summary: string;
   bullets?: string[];
@@ -61,6 +74,7 @@ type CoachResponse = {
   notes?: string[];
   transcript?: string;
   llm?: LLMAnalysis;
+  personalizedContentPlan?: PersonalizedContentPlan;
   metrics?: {
     words_per_minute?: number;
     pace_label?: string;
@@ -150,9 +164,10 @@ function mapAnalyzePayload(api: any): CoachResponse {
       label: marker.category,
       detail: marker.message,
     })),
-    notes: [],
+    notes: api.notes ?? [],
     transcript: api.transcript ?? '',
     llm: api.llm_analysis ?? undefined,
+    personalizedContentPlan: api.personalized_content_plan ?? undefined,
     metrics: api.metrics ?? {},
   };
 }
@@ -214,6 +229,7 @@ export default function HomeScreen() {
   const [recording, setRecording] = useState(false);
   const [recordStart, setRecordStart] = useState<number | null>(null);
   const [recordElapsedSeconds, setRecordElapsedSeconds] = useState(0);
+  const [showContentPlan, setShowContentPlan] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [questionBusy, setQuestionBusy] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
@@ -381,6 +397,83 @@ export default function HomeScreen() {
     ];
   }, [feedback]);
 
+  const audioInsights = useMemo(() => {
+    const audio = feedback?.metrics?.audio_delivery;
+    if (!audio) {
+      return null;
+    }
+
+    const monotone = audio.monotone ?? {};
+    const volume = audio.volume ?? {};
+    const silence = audio.silence ?? {};
+
+    return {
+      monotoneLabel: monotone.label ?? 'unknown',
+      pitchSemitoneStd:
+        typeof monotone.pitch_std_semitones === 'number'
+          ? monotone.pitch_std_semitones
+          : null,
+      voicedFrames:
+        typeof monotone.voiced_frames === 'number' ? monotone.voiced_frames : 0,
+      volumeLabel: volume.consistency_label ?? 'unknown',
+      tooQuiet: !!volume.too_quiet,
+      meanDbfs: typeof volume.mean_dbfs === 'number' ? volume.mean_dbfs : null,
+      trailingRatio:
+        typeof volume.trailing_off_ratio === 'number' ? volume.trailing_off_ratio : null,
+      trailingEvents:
+        typeof volume.trailing_off_events === 'number' ? volume.trailing_off_events : 0,
+      pauseQuality: silence.pause_quality ?? 'unknown',
+      effectivePauses:
+        typeof silence.effective_pauses === 'number' ? silence.effective_pauses : 0,
+      awkwardSilences:
+        typeof silence.awkward_silences === 'number' ? silence.awkward_silences : 0,
+    };
+  }, [feedback]);
+
+  const audioNotes = useMemo(() => {
+    const notes = feedback?.notes ?? [];
+    return notes.filter((note) => /audio|tonal|pitch|ffmpeg|numpy/i.test(note));
+  }, [feedback]);
+
+  const audioIssueDetails = useMemo(() => {
+    if (!audioInsights) return [];
+
+    const details: string[] = [];
+    if (audioInsights.monotoneLabel === 'monotone') {
+      details.push('Pitch variation is low across voiced segments. Add stronger inflection on key words.');
+    } else if (audioInsights.monotoneLabel === 'dynamic') {
+      details.push('Pitch variation is healthy and helps emphasis across points.');
+    } else if (audioInsights.voicedFrames < 8) {
+      details.push('Not enough voiced frames were detected to score pitch reliably.');
+    }
+
+    if (audioInsights.tooQuiet) {
+      if (typeof audioInsights.meanDbfs === 'number') {
+        details.push(`Average loudness is ${audioInsights.meanDbfs.toFixed(1)} dBFS (below the projection target).`);
+      } else {
+        details.push('Overall loudness is low. Increase baseline projection.');
+      }
+    } else if (audioInsights.volumeLabel === 'inconsistent') {
+      if (typeof audioInsights.trailingRatio === 'number') {
+        details.push(`Volume consistency is unstable; trailing-off ratio is ${(audioInsights.trailingRatio * 100).toFixed(0)}%.`);
+      } else {
+        details.push('Volume consistency is unstable across sentence endings.');
+      }
+    }
+
+    if (audioInsights.pauseQuality === 'mixed') {
+      details.push(
+        `Pausing is mixed: ${audioInsights.effectivePauses} effective pauses and ${audioInsights.awkwardSilences} awkward silence(s).`,
+      );
+    } else if (audioInsights.pauseQuality === 'needs_work') {
+      details.push(
+        `Pausing needs work: awkward pauses are too frequent (${audioInsights.awkwardSilences} detected).`,
+      );
+    }
+
+    return details;
+  }, [audioInsights]);
+
   const answerPaceState = useMemo(() => {
     const wordsPerMinute = answerFeedback?.metrics?.words_per_minute;
     if (typeof wordsPerMinute !== 'number') {
@@ -521,10 +614,10 @@ export default function HomeScreen() {
       if (Platform.OS === 'web') {
         const response = await fetch(videoUri);
         const blob = await response.blob();
-        form.append('file', blob, 'practice.mp4');
+        form.append('video', blob, 'practice.mp4');
       } else {
         form.append(
-          'file',
+          'video',
           {
             uri: videoUri,
             name: 'practice.mp4',
@@ -538,7 +631,7 @@ export default function HomeScreen() {
       }
       form.append('preset', preset);
 
-      const result = await fetch(`${BACKEND_URL}/analyze`, {
+      const result = await fetch(`${BACKEND_URL}/api/analyze`, {
         method: 'POST',
         body: form,
       });
@@ -549,9 +642,26 @@ export default function HomeScreen() {
         return;
       }
 
-      const api = await result.json();
+      const { jobId } = await result.json();
+
+      const pollResults = async (id: string): Promise<any> => {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const poll = await fetch(`${BACKEND_URL}/api/results/${id}`);
+          if (!poll.ok) throw new Error(`Poll failed (${poll.status})`);
+          const data = await poll.json();
+          if (data.status === 'done') return data.results;
+          if (data.status === 'error')
+            throw new Error(data.error_message ?? 'Analysis failed on server');
+          // pending or processing → keep polling
+        }
+        throw new Error('Analysis timed out after 4 minutes. Please try again.');
+      };
+
+      const api = await pollResults(jobId);
       const mapped = mapAnalyzePayload(api);
       setFeedback(mapped);
+      setShowContentPlan(false);
 
       // Fire-and-forget: save session to Supabase if user is logged in
       if (user) {
@@ -997,6 +1107,138 @@ export default function HomeScreen() {
                 </View>
               )}
 
+              {!!audioInsights && (
+                <View style={[styles.audioPanel, isDark && styles.audioPanelDark]}>
+                  <View style={styles.audioHeaderRow}>
+                    <Ionicons name="volume-high-outline" size={18} color={palette.accentDeep} />
+                    <ThemedText style={styles.audioHeaderTitle}>Audio & tonal analysis</ThemedText>
+                  </View>
+                  <ThemedText style={styles.audioGuideText}>
+                    Monotone checks pitch variation, Volume checks projection consistency, and Pauses
+                    compares strategic pauses vs mid-sentence silences.
+                  </ThemedText>
+
+                  <View style={styles.audioChipRow}>
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Monotone</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          {
+                            color:
+                              audioInsights.monotoneLabel === 'monotone'
+                                ? '#d1652c'
+                                : audioInsights.monotoneLabel === 'dynamic'
+                                ? '#17998a'
+                                : palette.accentDeep,
+                          },
+                        ]}>
+                        {audioInsights.monotoneLabel === 'monotone'
+                          ? 'Flagged'
+                          : audioInsights.monotoneLabel === 'dynamic'
+                          ? 'Dynamic'
+                          : 'Unknown'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Low variation sounds flat; dynamic variation keeps attention.
+                      </ThemedText>
+                      {typeof audioInsights.pitchSemitoneStd === 'number' && (
+                        <ThemedText style={styles.audioChipMeta}>
+                          {audioInsights.pitchSemitoneStd.toFixed(2)} stdev semitones
+                        </ThemedText>
+                      )}
+                    </View>
+
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Volume</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          {
+                            color:
+                              audioInsights.volumeLabel === 'consistent'
+                                ? '#17998a'
+                                : audioInsights.tooQuiet
+                                ? '#d1652c'
+                                : palette.accentDeep,
+                          },
+                        ]}>
+                        {audioInsights.volumeLabel === 'too_quiet'
+                          ? 'Too quiet'
+                          : audioInsights.volumeLabel === 'consistent'
+                          ? 'Consistent'
+                          : audioInsights.volumeLabel === 'inconsistent'
+                          ? 'Needs work'
+                          : 'Unknown'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Detects quiet speech and whether sentence endings fade out.
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipMeta}>
+                        {audioInsights.trailingEvents} trailing-off event
+                        {audioInsights.trailingEvents === 1 ? '' : 's'}
+                      </ThemedText>
+                    </View>
+
+                    <View style={[styles.audioChip, isDark && styles.audioChipDark]}>
+                      <ThemedText style={styles.audioChipLabel}>Pauses</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.audioChipValue,
+                          {
+                            color:
+                              audioInsights.pauseQuality === 'unknown'
+                                ? palette.accentDeep
+                                : audioInsights.pauseQuality === 'needs_work'
+                                ? '#d1652c'
+                                : audioInsights.pauseQuality === 'mixed'
+                                ? '#9b5f1f'
+                                : '#17998a',
+                          },
+                        ]}>
+                        {audioInsights.pauseQuality === 'unknown'
+                          ? 'Unknown'
+                          : audioInsights.pauseQuality === 'needs_work'
+                          ? 'Needs work'
+                          : audioInsights.pauseQuality === 'mixed'
+                          ? 'Mixed'
+                          : 'Effective'}
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipHelp}>
+                        Effective pauses happen after complete thoughts, not mid-sentence.
+                      </ThemedText>
+                      <ThemedText style={styles.audioChipMeta}>
+                        {audioInsights.pauseQuality === 'unknown'
+                          ? 'Not enough pause events detected'
+                          : `${audioInsights.effectivePauses} effective - ${audioInsights.awkwardSilences} awkward`}
+                      </ThemedText>
+                    </View>
+                  </View>
+
+                  {!!audioIssueDetails.length && (
+                    <View style={styles.audioIssueBox}>
+                      <ThemedText style={styles.audioIssueTitle}>Issue details</ThemedText>
+                      {audioIssueDetails.slice(0, 3).map((detail, index) => (
+                        <View key={`audio-issue-${index}`} style={styles.audioIssueRow}>
+                          <Ionicons name="information-circle-outline" size={14} color={palette.accentDeep} />
+                          <ThemedText style={styles.audioIssueText}>{detail}</ThemedText>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {!!audioNotes.length && (
+                    <View style={styles.audioNoteBox}>
+                      {audioNotes.slice(0, 2).map((note, index) => (
+                        <ThemedText key={`audio-note-${index}`} style={styles.audioNoteText}>
+                          {note}
+                        </ThemedText>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
               {!!llmScoreCards.length && (
                 <View style={styles.scoreGrid}>
                   {llmScoreCards.map((score) => (
@@ -1031,6 +1273,95 @@ export default function HomeScreen() {
                       </ThemedText>
                     </View>
                   ))}
+                </View>
+              )}
+
+              {!!feedback.personalizedContentPlan?.improvements?.length && (
+                <View style={[styles.contentPlanPanel, isDark && styles.contentPlanPanelDark]}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Toggle topic-specific improvements"
+                    onPress={() => setShowContentPlan((previous) => !previous)}
+                    style={({ pressed }) => [
+                      styles.contentPlanToggle,
+                      isDark && styles.contentPlanToggleDark,
+                      pressed && styles.buttonPressed,
+                    ]}>
+                    <View style={styles.contentPlanToggleLeft}>
+                      <View style={[styles.contentPlanIcon, isDark && styles.contentPlanIconDark]}>
+                        <Ionicons name="sparkles-outline" size={16} color={isDark ? '#ffd6a8' : '#fff3e5'} />
+                      </View>
+                      <View style={styles.contentPlanTextWrap}>
+                        <ThemedText style={[styles.contentPlanToggleTitle, isDark && styles.contentPlanToggleTitleDark]}>
+                          Topic-specific improvements
+                        </ThemedText>
+                        <ThemedText style={[styles.contentPlanToggleHint, isDark && styles.contentPlanToggleHintDark]}>
+                          {showContentPlan
+                            ? 'Hide personalized feedback'
+                            : `View ${feedback.personalizedContentPlan.improvements.length} tailored fixes`}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <View style={styles.contentPlanToggleRight}>
+                      <View style={[styles.contentPlanCountBadge, isDark && styles.contentPlanCountBadgeDark]}>
+                        <ThemedText style={styles.contentPlanCountText}>
+                          {feedback.personalizedContentPlan.improvements.length}
+                        </ThemedText>
+                      </View>
+                      <Ionicons
+                        name={showContentPlan ? 'chevron-up-outline' : 'chevron-down-outline'}
+                        size={18}
+                        color={palette.accentDeep}
+                      />
+                    </View>
+                  </Pressable>
+
+                  {showContentPlan && (
+                    <View style={styles.contentPlanBody}>
+                      {!!feedback.personalizedContentPlan.topic_summary && (
+                        <View style={[styles.contentTopicBox, isDark && styles.contentTopicBoxDark]}>
+                          <ThemedText style={styles.contentTopicLabel}>Detected topic</ThemedText>
+                          <ThemedText style={styles.contentTopicText}>
+                            {feedback.personalizedContentPlan.topic_summary}
+                          </ThemedText>
+                        </View>
+                      )}
+
+                      {!!feedback.personalizedContentPlan.audience_takeaway && (
+                        <View style={styles.contentTakeawayRow}>
+                          <Ionicons name="megaphone-outline" size={15} color={palette.accentDeep} />
+                          <ThemedText style={styles.contentTakeawayText}>
+                            {feedback.personalizedContentPlan.audience_takeaway}
+                          </ThemedText>
+                        </View>
+                      )}
+
+                      {feedback.personalizedContentPlan.improvements.map((item, index) => (
+                        <View
+                          key={`content-improvement-${index}`}
+                          style={[styles.contentImprovementCard, isDark && styles.contentImprovementCardDark]}>
+                          <View style={styles.contentImprovementHeader}>
+                            <View style={[styles.contentImprovementIndex, isDark && styles.contentImprovementIndexDark]}>
+                              <ThemedText style={styles.contentImprovementIndexText}>{index + 1}</ThemedText>
+                            </View>
+                            <ThemedText style={styles.contentImprovementTitle}>{item.title}</ThemedText>
+                          </View>
+                          <ThemedText style={styles.contentImprovementIssue}>
+                            {item.content_issue}
+                          </ThemedText>
+                          <ThemedText style={styles.contentImprovementFix}>
+                            Fix: {item.specific_fix}
+                          </ThemedText>
+                          <View style={[styles.contentRevisionBox, isDark && styles.contentRevisionBoxDark]}>
+                            <Ionicons name="create-outline" size={14} color={palette.accentDeep} />
+                            <ThemedText style={styles.contentRevisionText}>
+                              {item.example_revision}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -1670,6 +2001,117 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 99,
   },
+  audioPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.48)',
+    paddingVertical: 13,
+    paddingHorizontal: 13,
+    gap: 12,
+  },
+  audioPanelDark: {
+    backgroundColor: 'rgba(16, 12, 9, 0.68)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  audioHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  audioHeaderTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  audioGuideText: {
+    fontSize: 13,
+    lineHeight: 19,
+    opacity: 0.86,
+  },
+  audioChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  audioChip: {
+    minWidth: 220,
+    flexGrow: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    paddingVertical: 11,
+    paddingHorizontal: 11,
+    gap: 5,
+  },
+  audioChipDark: {
+    backgroundColor: 'rgba(23, 18, 13, 0.76)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  audioChipLabel: {
+    fontSize: 12,
+    lineHeight: 15,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontFamily: Fonts.rounded,
+  },
+  audioChipValue: {
+    fontFamily: Fonts.rounded,
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  audioChipHelp: {
+    fontSize: 12,
+    lineHeight: 17,
+    opacity: 0.84,
+  },
+  audioChipMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.76,
+  },
+  audioNoteBox: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    paddingVertical: 7,
+    paddingHorizontal: 9,
+    gap: 4,
+  },
+  audioNoteText: {
+    fontSize: 11,
+    lineHeight: 15,
+    opacity: 0.82,
+  },
+  audioIssueBox: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    paddingVertical: 8,
+    paddingHorizontal: 9,
+    gap: 6,
+  },
+  audioIssueTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 12,
+    lineHeight: 15,
+    color: palette.accentDeep,
+  },
+  audioIssueRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  audioIssueText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15,
+    opacity: 0.86,
+  },
   scoreGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1716,6 +2158,206 @@ const styles = StyleSheet.create({
   listItemText: {
     flex: 1,
     lineHeight: 20,
+  },
+  contentPlanPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  contentPlanPanelDark: {
+    backgroundColor: 'rgba(14, 11, 8, 0.62)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentPlanToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  contentPlanToggleDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.74)',
+    borderColor: 'rgba(255, 214, 168, 0.32)',
+  },
+  contentPlanToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 9,
+  },
+  contentPlanIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.accent,
+  },
+  contentPlanIconDark: {
+    backgroundColor: 'rgba(209, 101, 44, 0.6)',
+  },
+  contentPlanTextWrap: {
+    flex: 1,
+  },
+  contentPlanToggleTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
+    lineHeight: 19,
+    color: palette.accentDeep,
+  },
+  contentPlanToggleTitleDark: {
+    color: '#ffe9d2',
+  },
+  contentPlanToggleHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.78,
+  },
+  contentPlanToggleHintDark: {
+    color: '#f2d9be',
+    opacity: 0.82,
+  },
+  contentPlanToggleRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contentPlanCountBadge: {
+    minWidth: 24,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7d5b9',
+  },
+  contentPlanCountBadgeDark: {
+    backgroundColor: 'rgba(247, 213, 185, 0.22)',
+  },
+  contentPlanCountText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 12,
+    lineHeight: 14,
+    color: palette.accentDeep,
+  },
+  contentPlanBody: {
+    gap: 10,
+  },
+  contentTopicBox: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    gap: 3,
+  },
+  contentTopicBoxDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.74)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentTopicLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: Fonts.rounded,
+    opacity: 0.75,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  contentTopicText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  contentTakeawayRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+  },
+  contentTakeawayText: {
+    flex: 1,
+    lineHeight: 20,
+    fontSize: 13,
+  },
+  contentImprovementHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contentImprovementIndex: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7d5b9',
+  },
+  contentImprovementIndexDark: {
+    backgroundColor: 'rgba(247, 213, 185, 0.22)',
+  },
+  contentImprovementIndexText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 11,
+    lineHeight: 13,
+    color: palette.accentDeep,
+  },
+  contentImprovementCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  contentImprovementCardDark: {
+    backgroundColor: 'rgba(18, 14, 10, 0.72)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentImprovementTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 14,
+    lineHeight: 18,
+    color: palette.accentDeep,
+  },
+  contentImprovementIssue: {
+    fontSize: 13,
+    lineHeight: 19,
+    opacity: 0.9,
+  },
+  contentImprovementFix: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  contentRevisionBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  contentRevisionBoxDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.72)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentRevisionText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    opacity: 0.88,
   },
   annotatedPanel: {
     borderRadius: 12,
