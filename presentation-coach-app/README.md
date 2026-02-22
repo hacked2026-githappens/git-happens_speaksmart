@@ -1,50 +1,115 @@
-# Welcome to your Expo app 👋
+# SpeakSmart — Frontend (React Native / Expo)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This is the Expo frontend for SpeakSmart, an AI-powered public speaking coach. It runs on web, iOS, and Android from a single codebase.
 
-## Get started
+---
 
-1. Install dependencies
+## Tech Stack
 
-   ```bash
-   npm install
-   ```
+- **React Native 0.81.5** + **Expo SDK 54**
+- **Expo Router** — file-based routing
+- **TypeScript 5.9.2** — strict mode enabled
+- **NativeWind** — Tailwind CSS for React Native
+- **Supabase JS** — authentication and session database
+- **Victory Native** — charts and data visualization
+- **React Native Reanimated** — animations
+- **expo-video / expo-av** — video playback and audio recording
 
-2. Start the app
+---
 
-   ```bash
-   npx expo start
-   ```
+## Getting Started
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+### 1. Install dependencies
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### 2. Configure environment variables
 
-## Learn more
+Create `.env.local` in this directory:
 
-To learn more about developing your project with Expo, look at the following resources:
+```
+EXPO_PUBLIC_API_URL=http://localhost:8000
+EXPO_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon_key>
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 3. Start the app
 
-## Join the community
+```bash
+npx expo start --web        # Recommended for development
+npx expo start --ios        # iOS simulator
+npx expo start --android    # Android emulator
+```
 
-Join our community of developers creating universal apps.
+The backend must be running on port 8000. See [../SETUP.md](../SETUP.md) for full setup instructions.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+---
+
+## Project Structure
+
+```
+presentation-coach-app/
+├── app/
+│   ├── _layout.tsx             # Root layout — AuthProvider + AuthGuard + theme
+│   ├── index.tsx               # Landing page (unauthenticated)
+│   ├── login.tsx               # Sign-in / sign-up
+│   ├── logout.tsx              # Cleanup + sign-out
+│   ├── practice-history.tsx    # Drill history detail view
+│   └── (tabs)/
+│       ├── _layout.tsx         # Dashboard: collapsible sidebar + header
+│       ├── index.tsx           # Coach screen — video upload + AI analysis
+│       ├── history.tsx         # Session history + trend charts
+│       ├── drill.tsx           # Practice drills (4 modes)
+│       └── explore.tsx         # Coaching guide
+├── components/                 # Shared UI components
+├── contexts/
+│   └── auth.tsx                # AuthProvider + useAuth() hook
+├── hooks/                      # useColorScheme, useThemeColor
+├── lib/
+│   ├── supabase.ts             # Supabase client
+│   ├── database.ts             # Session CRUD operations
+│   ├── practice-history.ts     # Local drill history (AsyncStorage)
+│   └── web-*.ts                # Browser draft persistence
+└── constants/
+    └── theme.ts                # Colors, fonts, preset palette
+```
+
+---
+
+## Screens
+
+| Screen | Route | Description |
+|--------|-------|-------------|
+| Landing | `/` | Entry point for unauthenticated users |
+| Login | `/login` | Email/password sign-in and sign-up |
+| Coach | `/(tabs)` | Upload a video and get AI coaching feedback |
+| History | `/(tabs)/history` | View past sessions and score trends |
+| Drill | `/(tabs)/drill` | Interactive speaking practice (Q&A, Filler, Paragraph, Topic) |
+| Explore | `/(tabs)/explore` | Coaching tips and educational content |
+| Practice History | `/practice-history` | Detailed drill session history |
+
+---
+
+## Key Conventions
+
+**Styling:** Use NativeWind `className` for all styling. Only use `StyleSheet.create` for dynamic values.
+
+**Platform-specific files:** Use `.native.tsx` / `.web.tsx` suffixes — Expo Router resolves them automatically.
+
+**Environment variables:** Only `EXPO_PUBLIC_*` variables are safe to use in the frontend bundle.
+
+**Accessibility:** All interactive elements must have `accessibilityLabel` and `accessibilityRole`. Never convey information through color alone.
+
+---
+
+## Available Scripts
+
+```bash
+npm run start    # Start Expo dev server
+npm run web      # Start for web
+npm run ios      # Start for iOS simulator
+npm run android  # Start for Android emulator
+npm run lint     # Run ESLint
+```
