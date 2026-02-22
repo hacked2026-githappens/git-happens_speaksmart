@@ -4,8 +4,8 @@ python-multipart
 python-dotenv
 faster-whisper
 groq
+numpy
 supabase
 ffmpeg-python
 opencv-python
 mediapipe
-python-dotenv

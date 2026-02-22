@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -227,6 +228,56 @@ def _strip_and_parse(raw: str) -> dict | None:
         return json.loads(text)
     except json.JSONDecodeError:
         return None
+
+
+def _extract_json_candidate(raw: str) -> str:
+    text = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+    text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    return match.group(0) if match else text
+
+
+def _parse_relaxed_json(raw: str) -> dict | None:
+    """Best-effort parser for imperfect model JSON output."""
+    parsed = _strip_and_parse(raw)
+    if isinstance(parsed, dict):
+        return parsed
+
+    candidate = _extract_json_candidate(raw)
+    if not candidate:
+        return None
+
+    repaired = candidate
+    repaired = repaired.replace("\u201c", '"').replace("\u201d", '"')
+    repaired = repaired.replace("\u2018", "'").replace("\u2019", "'")
+    repaired = repaired.replace("\\'", "'")
+    repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
+    repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", repaired)
+
+    try:
+        parsed = json.loads(repaired)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: parse as Python-like dict
+    python_like = repaired
+    python_like = re.sub(r"\btrue\b", "True", python_like, flags=re.IGNORECASE)
+    python_like = re.sub(r"\bfalse\b", "False", python_like, flags=re.IGNORECASE)
+    python_like = re.sub(r"\bnull\b", "None", python_like, flags=re.IGNORECASE)
+    try:
+        parsed = ast.literal_eval(python_like)
+        if isinstance(parsed, dict):
+            return parsed
+    except (ValueError, SyntaxError):
+        return None
+    return None
+
+
+def _is_json_validation_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "json_validate_failed" in text or "failed to generate json" in text
 
 
 def _validate(data: dict) -> bool:
@@ -607,37 +658,48 @@ def generate_content_specific_plan(
             messages=messages,
             response_format={"type": "json_object"},
             max_tokens=900,
+            temperature=0.2,
         )
         raw = response.choices[0].message.content or ""
-        parsed = _strip_and_parse(raw)
+        parsed = _parse_relaxed_json(raw)
         if parsed and _validate_content_plan(parsed):
             return _normalize_content_plan(parsed)
+        logger.warning("Content-specific plan first response could not be validated. Raw snippet: %s", raw[:280])
     except Exception as exc:
-        logger.error("Content-specific plan failed on first attempt: %s", exc)
+        if _is_json_validation_error(exc):
+            logger.warning("Content-specific plan first attempt failed JSON validation; retrying with relaxed mode.")
+        else:
+            logger.error("Content-specific plan failed on first attempt: %s", exc)
 
     try:
         retry_messages = messages + [
             {
                 "role": "user",
                 "content": (
-                    "Return complete JSON only with keys: topic_summary, "
-                    "audience_takeaway, improvements[].title, improvements[].content_issue, "
-                    "improvements[].specific_fix, improvements[].example_revision."
+                    "Return ONLY a single JSON object. No markdown fences. "
+                    "Keep strings simple and avoid apostrophes. "
+                    "Required keys: topic_summary, audience_takeaway, improvements[].title, "
+                    "improvements[].content_issue, improvements[].specific_fix, "
+                    "improvements[].example_revision."
                 ),
             }
         ]
         response = client.chat.completions.create(
             model=GROQ_MODEL,
             messages=retry_messages,
-            response_format={"type": "json_object"},
             max_tokens=900,
+            temperature=0.1,
         )
         raw = response.choices[0].message.content or ""
-        parsed = _strip_and_parse(raw)
+        parsed = _parse_relaxed_json(raw)
         if parsed and _validate_content_plan(parsed):
             return _normalize_content_plan(parsed)
+        logger.warning("Content-specific plan retry returned unparseable/invalid JSON. Raw snippet: %s", raw[:280])
     except Exception as exc:
-        logger.error("Content-specific plan retry failed: %s", exc)
+        if _is_json_validation_error(exc):
+            logger.warning("Content-specific plan retry hit JSON validation error.")
+        else:
+            logger.error("Content-specific plan retry failed: %s", exc)
 
     return _safe_content_plan_defaults(transcript)
 

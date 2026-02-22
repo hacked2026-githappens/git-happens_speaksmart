@@ -21,6 +21,7 @@ async def run_analysis_job(
     """Background pipeline: transcribe + vision in parallel, then LLM, then store results."""
     # Import here to avoid circular import (job_runner imports from main, main imports job_runner)
     from main import (
+        analyze_audio_delivery,
         build_speech_metrics,
         build_summary_feedback,
         build_timeline_markers,
@@ -37,13 +38,21 @@ async def run_analysis_job(
             duration_seconds = detected if detected is not None else 30.0
 
         # Run transcription and non-verbal analysis in parallel
-        (transcript, words, _whisper_notes), nv_result = await asyncio.gather(
+        (transcript, words, whisper_notes), nv_result = await asyncio.gather(
             asyncio.to_thread(transcribe_with_whisper, temp_path),
             asyncio.to_thread(analyze_nonverbal, str(temp_path)),
         )
 
         metrics = build_speech_metrics(transcript, duration_seconds)
+        audio_delivery, audio_notes = await asyncio.to_thread(
+            analyze_audio_delivery,
+            temp_path,
+            words,
+            duration_seconds,
+        )
+        metrics["audio_delivery"] = audio_delivery
         metrics["non_verbal"] = nv_result["non_verbal"]
+        summary_feedback = build_summary_feedback(metrics)
 
         analysis_context = {
             "pace_label": metrics.get("pace_label"),
@@ -59,10 +68,14 @@ async def run_analysis_job(
         content_plan = await asyncio.to_thread(
             generate_content_specific_plan,
             transcript,
-            build_summary_feedback(metrics),
+            summary_feedback,
             llm_result.get("improvements", []),
             preset,
         )
+
+        notes = [*whisper_notes, *audio_notes]
+        if not transcript:
+            notes.append("Transcript is empty. Speaking metrics may be limited.")
 
         results: dict[str, Any] = {
             # AGENTS.md spec keys
@@ -82,11 +95,12 @@ async def run_analysis_job(
             }),
             # Backward-compat keys so mapAnalyzePayload() + saveSession() in index.tsx work unchanged
             "transcript": transcript,
-            "summary_feedback": build_summary_feedback(metrics),
+            "summary_feedback": summary_feedback,
             "markers": [m.model_dump() for m in build_timeline_markers(metrics)],
             "llm_analysis": llm_result,
             "metrics": metrics,
             "personalized_content_plan": content_plan,
+            "notes": notes,
         }
 
         supabase.table("jobs").update({"status": "done", "results": results}).eq("id", job_id).execute()
