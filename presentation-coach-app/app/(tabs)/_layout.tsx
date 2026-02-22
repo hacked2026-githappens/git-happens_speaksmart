@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   navButton: {
-    minHeight: 40,
+    minHeight: 44,
     borderRadius: 12,
     paddingHorizontal: 10,
     flexDirection: 'row',
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   logoutButton: {
-    minHeight: 40,
+    minHeight: 44,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(198, 114, 140, 0.44)',
@@ -286,8 +286,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   toggleBtn: {
-    width: 34,
-    height: 34,
+    width: 44,
+    height: 44,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(104, 132, 187, 0.36)',

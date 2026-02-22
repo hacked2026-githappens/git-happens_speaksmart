@@ -1,5 +1,5 @@
-import React, { ReactNode, useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, View } from 'react-native';
+import React, { ReactNode, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 type AnimatedAuroraBackgroundProps = {
@@ -13,8 +13,16 @@ export function AnimatedAuroraBackground({ children }: AnimatedAuroraBackgroundP
   const fadeA = useRef(new Animated.Value(0.6)).current;
   const fadeB = useRef(new Animated.Value(0.52)).current;
   const fadeC = useRef(new Animated.Value(0.45)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
 
   useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) return;
     const loopA = Animated.loop(
       Animated.sequence([
         Animated.timing(driftA, {
@@ -132,7 +140,7 @@ export function AnimatedAuroraBackground({ children }: AnimatedAuroraBackgroundP
       pulseB.stop();
       pulseC.stop();
     };
-  }, [driftA, driftB, driftC, fadeA, fadeB, fadeC]);
+  }, [reduceMotion, driftA, driftB, driftC, fadeA, fadeB, fadeC]);
 
   return (
     <View style={styles.container}>

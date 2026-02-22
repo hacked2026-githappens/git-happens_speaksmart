@@ -54,7 +54,12 @@ export default function ExploreScreen() {
           </View>
 
           {drills.map((drill) => (
-            <View key={drill.title} style={styles.row}>
+            <View
+              key={drill.title}
+              style={styles.row}
+              accessible
+              accessibilityRole="text"
+              accessibilityLabel={`${drill.title}: ${drill.detail}`}>
               <View style={styles.iconChip}>
                 <Ionicons name={drill.icon} size={16} color="#fff7ed" />
               </View>
@@ -72,7 +77,12 @@ export default function ExploreScreen() {
             <ThemedText style={styles.sectionTitle}>Before you hit record</ThemedText>
           </View>
           {checklist.map((item, index) => (
-            <View key={item} style={styles.checkRow}>
+            <View
+              key={item}
+              style={styles.checkRow}
+              accessible
+              accessibilityRole="text"
+              accessibilityLabel={`Tip ${index + 1}: ${item}`}>
               <ThemedText style={styles.checkIndex}>{index + 1}</ThemedText>
               <ThemedText style={styles.checkText}>{item}</ThemedText>
             </View>

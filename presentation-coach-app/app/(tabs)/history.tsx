@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   ActivityIndicator,
-  Platform,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -276,6 +275,9 @@ function FilterBar({
           const color = p === 'all' ? palette.accent : (PRESET_COLORS[p] ?? palette.accent);
           return (
             <Pressable key={p} onPress={() => onPresetChange(p)}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter by ${p === 'all' ? 'all presets' : p}`}
+              accessibilityState={{ selected: isActive }}
               style={[filterStyles.pill, isDark && filterStyles.pillDark, isActive && { backgroundColor: color, borderColor: color }]}>
               <ThemedText style={[filterStyles.pillText, isActive && filterStyles.pillTextActive]}>
                 {p.charAt(0).toUpperCase() + p.slice(1)}
@@ -289,6 +291,9 @@ function FilterBar({
           const isActive = periodFilter === days;
           return (
             <Pressable key={label} onPress={() => onPeriodChange(days)}
+              accessibilityRole="button"
+              accessibilityLabel={`Show last ${label}`}
+              accessibilityState={{ selected: isActive }}
               style={[filterStyles.pill, isDark && filterStyles.pillDark, isActive && { backgroundColor: palette.accent, borderColor: palette.accent }]}>
               <ThemedText style={[filterStyles.pillText, isActive && filterStyles.pillTextActive]}>
                 {label}
@@ -309,7 +314,11 @@ function MetricTabs({ active, onChange, isDark }: { active: MetricType; onChange
       {METRIC_TABS.map(({ key, label }) => {
         const isActive = active === key;
         return (
-          <Pressable key={key} onPress={() => onChange(key)} style={[filterStyles.tab, isActive && filterStyles.tabActive]}>
+          <Pressable key={key} onPress={() => onChange(key)}
+            accessibilityRole="tab"
+            accessibilityLabel={`${label} metrics`}
+            accessibilityState={{ selected: isActive }}
+            style={[filterStyles.tab, isActive && filterStyles.tabActive]}>
             <ThemedText style={[filterStyles.tabText, isActive && filterStyles.tabTextActive]}>{label}</ThemedText>
           </Pressable>
         );
@@ -929,6 +938,7 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
 
   const [presetFilter, setPresetFilter] = useState<PresetFilter>('all');
   const [periodFilter, setPeriodFilter] = useState<number>(0);
@@ -1017,33 +1027,12 @@ export default function HistoryScreen() {
 
   const confirmDeleteSession = useCallback(
     (session: Session) => {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const approved = window.confirm(
-          `Delete session from ${formatDate(session.created_at)} at ${formatTime(session.created_at)}?`,
-        );
-        if (approved) {
-          void handleDeleteSession(session);
-        }
-        return;
-      }
-
-      Alert.alert(
-        'Delete session?',
-        `This will permanently remove the session from ${formatDate(session.created_at)}.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => {
-              void handleDeleteSession(session);
-            },
-          },
-        ],
-      );
+      setPendingDelete(session);
     },
-    [handleDeleteSession],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
+
 
   const canvas = isDark ? palette.darkCanvas : palette.lightCanvas;
 
@@ -1160,6 +1149,46 @@ export default function HistoryScreen() {
         ))}
 
       </ScrollView>
+
+      <Modal
+        visible={pendingDelete !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPendingDelete(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconWrap}>
+              <Ionicons name="trash-outline" size={28} color="#ff6b7a" />
+            </View>
+            <ThemedText style={styles.modalTitle}>Delete session?</ThemedText>
+            <ThemedText style={styles.modalBody}>
+              {pendingDelete
+                ? `This will permanently remove the session from ${formatDate(pendingDelete.created_at)} at ${formatTime(pendingDelete.created_at)}.`
+                : ''}
+            </ThemedText>
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [styles.modalBtn, styles.modalBtnCancel, pressed && { opacity: 0.75 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel deletion"
+                onPress={() => setPendingDelete(null)}>
+                <ThemedText style={styles.modalBtnCancelText}>Cancel</ThemedText>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.modalBtn, styles.modalBtnDelete, pressed && { opacity: 0.75 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm delete session"
+                onPress={() => {
+                  if (pendingDelete) void handleDeleteSession(pendingDelete);
+                  setPendingDelete(null);
+                }}>
+                <ThemedText style={styles.modalBtnDeleteText}>Delete</ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </ThemedView>
   );
 }
@@ -1168,6 +1197,79 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#1b2550',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 143, 208, 0.36)',
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255, 80, 100, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 80, 100, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  modalTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 20,
+    color: '#eef5ff',
+    textAlign: 'center',
+  },
+  modalBody: {
+    fontSize: 14,
+    color: '#a8bcda',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+    width: '100%',
+  },
+  modalBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  modalBtnCancel: {
+    backgroundColor: 'rgba(18, 31, 65, 0.8)',
+    borderColor: 'rgba(108, 143, 208, 0.36)',
+  },
+  modalBtnCancelText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
+    color: '#c2d4ef',
+  },
+  modalBtnDelete: {
+    backgroundColor: 'rgba(180, 40, 60, 0.75)',
+    borderColor: 'rgba(255, 80, 100, 0.5)',
+  },
+  modalBtnDeleteText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
+    color: '#ffe4e8',
+  },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scrollContent: {
     padding: 18,
