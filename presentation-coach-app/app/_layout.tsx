@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { useEffect } from 'react';
@@ -14,19 +14,24 @@ export const unstable_settings = {
 function AuthGuard() {
   const { session, loading } = useAuth();
   const segments = useSegments();
+  const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
 
-    const inLoginScreen = segments[0] === 'login';
+    const rootSegment = segments[0];
+    const inLanding = pathname === '/';
+    const inLoginScreen = rootSegment === 'login';
+    const inLogoutScreen = rootSegment === 'logout';
+    const inPublicScreen = inLanding || inLoginScreen || inLogoutScreen;
 
-    if (!session && !inLoginScreen) {
+    if (!session && !inPublicScreen) {
       router.replace('/login');
-    } else if (session && inLoginScreen) {
+    } else if (session && (inLoginScreen || inLanding)) {
       router.replace('/(tabs)');
     }
-  }, [session, loading, segments]);
+  }, [session, loading, segments, pathname, router]);
 
   return null;
 }
@@ -39,8 +44,10 @@ export default function RootLayout() {
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AuthGuard />
         <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="logout" options={{ headerShown: false }} />
           <Stack.Screen name="practice-history" options={{ title: 'Practice History' }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>

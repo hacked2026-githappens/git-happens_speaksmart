@@ -24,3 +24,11 @@ export async function fetchSessions(userId: string) {
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 }
+
+export async function deleteSession(userId: string, sessionId: string) {
+  return supabase
+    .from('sessions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('id', sessionId);
+}

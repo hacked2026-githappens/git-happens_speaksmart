@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,24 +12,28 @@ import {
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import Animated, {
+  FadeInDown,
+  FadeInRight,
+  FadeOutRight,
+} from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/contexts/auth';
-import { fetchSessions } from '@/lib/database';
+import { deleteSession, fetchSessions } from '@/lib/database';
 
 const palette = {
-  accent: '#d1652c',
-  accentDeep: '#b54f1b',
-  mint: '#17998a',
-  lightCanvas: '#f6ede2',
-  darkCanvas: '#1b1510',
-  lightCard: '#fff8ee',
-  darkCard: '#2a211b',
-  borderLight: '#e7c9a4',
-  borderDark: 'rgba(255, 214, 168, 0.28)',
+  accent: '#39c8cf',
+  accentDeep: '#1c8fa3',
+  mint: '#2ac0a8',
+  lightCanvas: '#141d3f',
+  darkCanvas: '#141d3f',
+  lightCard: '#1b2550',
+  darkCard: '#1b2550',
+  borderLight: 'rgba(108, 143, 208, 0.36)',
+  borderDark: 'rgba(108, 143, 208, 0.36)',
 };
 
 const PRESET_COLORS: Record<string, string> = {
@@ -149,8 +155,7 @@ function getAnnotatedVideoMeta(session: Session): AnnotatedVideoMeta | null {
   if (!sourceUri) return null;
   if (!Array.isArray(rawMarkers) || rawMarkers.length === 0) return null;
 
-  const markers = rawMarkers
-    .map((marker: any) => {
+  const parsedMarkers: Array<AnnotatedMarker | null> = rawMarkers.map((marker: any) => {
       const time = Number(marker?.time_sec);
       if (!Number.isFinite(time)) return null;
       return {
@@ -158,9 +163,12 @@ function getAnnotatedVideoMeta(session: Session): AnnotatedVideoMeta | null {
         label: typeof marker?.label === 'string' ? marker.label : 'moment',
         detail: typeof marker?.detail === 'string' ? marker.detail : null,
       };
-    })
-    .filter((marker: AnnotatedMarker | null): marker is AnnotatedMarker => Boolean(marker))
-    .sort((a, b) => a.time_sec - b.time_sec);
+    });
+
+  const markers: AnnotatedMarker[] = parsedMarkers.filter(
+    (marker): marker is AnnotatedMarker => marker !== null,
+  );
+  markers.sort((a, b) => a.time_sec - b.time_sec);
 
   if (!markers.length) return null;
 
@@ -595,7 +603,17 @@ function ScoreBar({ label, value, color, isDark }: { label: string; value: numbe
 
 // ── Session card ──────────────────────────────────────────────────────────────
 
-function SessionCard({ session, isDark }: { session: Session; isDark: boolean }) {
+function SessionCard({
+  session,
+  isDark,
+  deleting,
+  onDelete,
+}: {
+  session: Session;
+  isDark: boolean;
+  deleting: boolean;
+  onDelete: (session: Session) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [showAnnotated, setShowAnnotated] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
@@ -621,29 +639,55 @@ function SessionCard({ session, isDark }: { session: Session; isDark: boolean })
 
   return (
     <View style={[cardStyles.card, isDark && cardStyles.cardDark]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${expanded ? 'Collapse' : 'Expand'} session details`}
-        onPress={() => setExpanded((v) => !v)}
-        style={cardStyles.headerRow}>
-        <View>
-          <ThemedText style={cardStyles.dateText}>{formatDate(session.created_at)}</ThemedText>
-          <ThemedText style={cardStyles.timeText}>{formatTime(session.created_at)}</ThemedText>
-        </View>
-        <View style={cardStyles.headerRight}>
+      <View style={cardStyles.headerRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${expanded ? 'Collapse' : 'Expand'} session details`}
+          onPress={() => setExpanded((v) => !v)}
+          style={cardStyles.headerMain}>
+          <View>
+            <ThemedText style={cardStyles.dateText}>{formatDate(session.created_at)}</ThemedText>
+            <ThemedText style={cardStyles.timeText}>{formatTime(session.created_at)}</ThemedText>
+          </View>
           <View style={[cardStyles.presetBadge, { backgroundColor: presetColor + '22', borderColor: presetColor + '55' }]}>
             <ThemedText style={[cardStyles.presetBadgeText, { color: presetColor }]}>
               {session.preset.charAt(0).toUpperCase() + session.preset.slice(1)}
             </ThemedText>
           </View>
-          <Ionicons
-            name={expanded ? 'chevron-up' : 'chevron-down'}
-            size={16}
-            color={isDark ? '#c7b5a2' : '#8a7560'}
-          />
+        </Pressable>
+        <View style={cardStyles.headerRight}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete this session"
+            disabled={deleting}
+            onPress={() => onDelete(session)}
+            style={({ pressed }) => [
+              cardStyles.iconButton,
+              deleting && cardStyles.iconButtonDisabled,
+              pressed && !deleting && { opacity: 0.82 },
+            ]}>
+            <Ionicons
+              name={deleting ? 'hourglass-outline' : 'trash-outline'}
+              size={15}
+              color={deleting ? '#9db0d2' : '#e59db0'}
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${expanded ? 'Collapse' : 'Expand'} session details`}
+            onPress={() => setExpanded((v) => !v)}
+            style={({ pressed }) => [cardStyles.iconButton, pressed && { opacity: 0.82 }]}>
+            <Ionicons
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={isDark ? '#c7b5a2' : '#8a7560'}
+            />
+          </Pressable>
         </View>
-      </Pressable>
+      </View>
 
+      {expanded && (
+        <View style={cardStyles.expandedBody}>
       {expanded && session.wpm != null && (
         <View style={cardStyles.statRow}>
           <Ionicons name="speedometer-outline" size={14} color={palette.accentDeep} />
@@ -868,6 +912,8 @@ function SessionCard({ session, isDark }: { session: Session; isDark: boolean })
           </View>
         </View>
       )}
+        </View>
+      )}
     </View>
   );
 }
@@ -876,13 +922,13 @@ function SessionCard({ session, isDark }: { session: Session; isDark: boolean })
 
 export default function HistoryScreen() {
   const { user } = useAuth();
-  const colorScheme = useColorScheme() ?? 'light';
-  const isDark = colorScheme === 'dark';
+  const isDark = true;
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [presetFilter, setPresetFilter] = useState<PresetFilter>('all');
   const [periodFilter, setPeriodFilter] = useState<number>(0);
@@ -952,6 +998,53 @@ export default function HistoryScreen() {
 
   const onRefresh = () => { setRefreshing(true); load(true); };
 
+  const handleDeleteSession = useCallback(
+    async (session: Session) => {
+      if (!user || deletingId) return;
+      setDeletingId(session.id);
+      const previous = sessions;
+      setSessions((prev) => prev.filter((item) => item.id !== session.id));
+
+      const { error: deleteError } = await deleteSession(user.id, session.id);
+      if (deleteError) {
+        setSessions(previous);
+        setError(deleteError.message || 'Could not delete this session.');
+      }
+      setDeletingId(null);
+    },
+    [deletingId, sessions, user],
+  );
+
+  const confirmDeleteSession = useCallback(
+    (session: Session) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const approved = window.confirm(
+          `Delete session from ${formatDate(session.created_at)} at ${formatTime(session.created_at)}?`,
+        );
+        if (approved) {
+          void handleDeleteSession(session);
+        }
+        return;
+      }
+
+      Alert.alert(
+        'Delete session?',
+        `This will permanently remove the session from ${formatDate(session.created_at)}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void handleDeleteSession(session);
+            },
+          },
+        ],
+      );
+    },
+    [handleDeleteSession],
+  );
+
   const canvas = isDark ? palette.darkCanvas : palette.lightCanvas;
 
   if (loading) {
@@ -981,7 +1074,7 @@ export default function HistoryScreen() {
 
         {error && (
           <View style={[styles.errorBox, isDark && styles.errorBoxDark]}>
-            <Ionicons name="warning-outline" size={16} color="#9a2f1f" />
+            <Ionicons name="warning-outline" size={16} color="#ffd3c9" />
             <ThemedText style={styles.errorText}>{error}</ThemedText>
           </View>
         )}
@@ -998,38 +1091,43 @@ export default function HistoryScreen() {
           <View style={[styles.chartCard, isDark && styles.chartCardDark]}>
             <MetricTabs active={activeMetric} onChange={setActiveMetric} isDark={isDark} />
 
-            {isNonverbalEmpty ? (
-              <View style={chartStyles.noDataBox}>
-                <Ionicons name="eye-off-outline" size={28} color={palette.accent} />
-                <ThemedText style={chartStyles.noDataText}>
-                  No non-verbal data in these sessions. Use the camera-based coach to capture gesture, eye contact, and posture metrics.
-                </ThemedText>
-              </View>
-            ) : (
-              <View style={chartStyles.chartRow}>
-                <View style={{ flex: 1 }}>
-                  <LineChart
-                    sessions={chartSessions}
+            <Animated.View
+              key={`metric-${activeMetric}`}
+              entering={FadeInRight.duration(220)}
+              exiting={FadeOutRight.duration(180)}>
+              {isNonverbalEmpty ? (
+                <View style={chartStyles.noDataBox}>
+                  <Ionicons name="eye-off-outline" size={28} color={palette.accent} />
+                  <ThemedText style={chartStyles.noDataText}>
+                    No non-verbal data in these sessions. Use the camera-based coach to capture gesture, eye contact, and posture metrics.
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={chartStyles.chartRow}>
+                  <View style={{ flex: 1 }}>
+                    <LineChart
+                      sessions={chartSessions}
+                      allSeries={currentSeries}
+                      activeKeys={currentActiveKeys}
+                      referenceLines={REFERENCE_LINES[activeMetric]}
+                      isDark={isDark}
+                    />
+                  </View>
+                  <MetricCheckboxes
                     allSeries={currentSeries}
                     activeKeys={currentActiveKeys}
-                    referenceLines={REFERENCE_LINES[activeMetric]}
+                    onToggle={toggleLine}
                     isDark={isDark}
                   />
                 </View>
-                <MetricCheckboxes
-                  allSeries={currentSeries}
-                  activeKeys={currentActiveKeys}
-                  onToggle={toggleLine}
-                  isDark={isDark}
-                />
-              </View>
-            )}
+              )}
 
-            <ImprovementSummary
-              sessions={filteredSessions}
-              activeSeries={isNonverbalEmpty ? [] : activeSeries}
-              isDark={isDark}
-            />
+              <ImprovementSummary
+                sessions={filteredSessions}
+                activeSeries={isNonverbalEmpty ? [] : activeSeries}
+                isDark={isDark}
+              />
+            </Animated.View>
           </View>
         )}
 
@@ -1052,7 +1150,13 @@ export default function HistoryScreen() {
         )}
 
         {[...filteredSessions].reverse().map((session) => (
-          <SessionCard key={session.id} session={session} isDark={isDark} />
+          <SessionCard
+            key={session.id}
+            session={session}
+            isDark={isDark}
+            deleting={deletingId === session.id}
+            onDelete={confirmDeleteSession}
+          />
         ))}
 
       </ScrollView>
@@ -1067,7 +1171,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scrollContent: {
     padding: 18,
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: 100,
     gap: 14,
     maxWidth: 900,
@@ -1079,20 +1183,20 @@ const styles = StyleSheet.create({
   pageSubtitle: { fontSize: 14, opacity: 0.7 },
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12,
-    borderRadius: 12, backgroundColor: '#f8ddd8', borderWidth: 1, borderColor: '#f0b8ae',
+    borderRadius: 12, backgroundColor: 'rgba(154,47,31,0.16)', borderWidth: 1, borderColor: 'rgba(240,184,174,0.32)',
   },
-  errorBoxDark: { backgroundColor: 'rgba(154,47,31,0.2)', borderColor: 'rgba(240,184,174,0.3)' },
-  errorText: { flex: 1, fontSize: 14, color: '#9a2f1f' },
+  errorBoxDark: { backgroundColor: 'rgba(154,47,31,0.16)', borderColor: 'rgba(240,184,174,0.32)' },
+  errorText: { flex: 1, fontSize: 14, color: '#ffd3c9' },
   chartCard: {
     borderRadius: 20, borderWidth: 1, borderColor: palette.borderLight,
-    backgroundColor: '#fff8ee', padding: 16,
+    backgroundColor: palette.lightCard, padding: 16,
   },
-  chartCardDark: { backgroundColor: '#2a211b', borderColor: palette.borderDark },
+  chartCardDark: { backgroundColor: palette.darkCard, borderColor: palette.borderDark },
   emptyBox: {
     borderRadius: 20, borderWidth: 1, borderColor: palette.borderLight,
-    backgroundColor: '#fff8ee', padding: 32, alignItems: 'center', gap: 10,
+    backgroundColor: palette.lightCard, padding: 32, alignItems: 'center', gap: 10,
   },
-  emptyBoxDark: { backgroundColor: '#2a211b', borderColor: palette.borderDark },
+  emptyBoxDark: { backgroundColor: palette.darkCard, borderColor: palette.borderDark },
   emptyIcon: { marginBottom: 4 },
   emptyTitle: { fontFamily: Fonts.rounded, fontSize: 20 },
   emptyText: { fontSize: 14, lineHeight: 21, textAlign: 'center', opacity: 0.75, maxWidth: 280 },
@@ -1108,7 +1212,7 @@ const chartStyles = StyleSheet.create({
   noDataText: { fontSize: 13, opacity: 0.75, textAlign: 'center', maxWidth: 260, lineHeight: 19 },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   barLabel: { width: 72, fontSize: 13, fontFamily: Fonts.rounded },
-  barTrack: { flex: 1, height: 10, borderRadius: 99, backgroundColor: 'rgba(47,34,25,0.12)', overflow: 'hidden' },
+  barTrack: { flex: 1, height: 10, borderRadius: 99, backgroundColor: 'rgba(108, 143, 208, 0.24)', overflow: 'hidden' },
   barTrackDark: { backgroundColor: 'rgba(255,255,255,0.12)' },
   barFill: { height: '100%', borderRadius: 99 },
   barValue: { width: 40, fontSize: 12, fontFamily: Fonts.rounded, textAlign: 'right' },
@@ -1123,7 +1227,7 @@ const filterStyles = StyleSheet.create({
   pillTextActive: { color: '#fff', opacity: 1 },
   tabRow: {
     flexDirection: 'row', borderRadius: 12,
-    backgroundColor: 'rgba(47,34,25,0.08)', padding: 3, gap: 2, marginBottom: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)', padding: 3, gap: 2, marginBottom: 14,
   },
   tabRowDark: { backgroundColor: 'rgba(255,255,255,0.08)' },
   tab: { flex: 1, paddingVertical: 7, borderRadius: 10, alignItems: 'center' },
@@ -1167,11 +1271,36 @@ const summaryStyles = StyleSheet.create({
 const cardStyles = StyleSheet.create({
   card: {
     borderRadius: 20, borderWidth: 1, borderColor: palette.borderLight,
-    backgroundColor: '#fff8ee', padding: 16, gap: 10,
+    backgroundColor: palette.lightCard, padding: 16, gap: 10,
   },
-  cardDark: { backgroundColor: '#2a211b', borderColor: palette.borderDark },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardDark: { backgroundColor: palette.darkCard, borderColor: palette.borderDark },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  headerMain: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(108, 143, 208, 0.32)',
+    backgroundColor: 'rgba(16, 32, 68, 0.48)',
+  },
+  iconButtonDisabled: {
+    opacity: 0.65,
+  },
+  expandedBody: {
+    gap: 10,
+  },
   dateText: { fontFamily: Fonts.rounded, fontSize: 15 },
   timeText: { fontSize: 12, opacity: 0.65, marginTop: 2 },
   presetBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
@@ -1239,11 +1368,11 @@ const cardStyles = StyleSheet.create({
   },
   snapshotPlanCard: {
     borderWidth: 1,
-    borderColor: 'rgba(209,101,44,0.15)',
+    borderColor: 'rgba(108, 143, 208, 0.3)',
     borderRadius: 10,
     padding: 8,
     gap: 3,
-    backgroundColor: 'rgba(209,101,44,0.04)',
+    backgroundColor: 'rgba(15, 27, 58, 0.55)',
   },
   snapshotPlanTitle: {
     fontFamily: Fonts.rounded,
@@ -1268,15 +1397,15 @@ const cardStyles = StyleSheet.create({
   annotatedPanel: {
     marginTop: 2,
     borderWidth: 1,
-    borderColor: 'rgba(209,101,44,0.22)',
-    backgroundColor: 'rgba(209,101,44,0.06)',
+    borderColor: 'rgba(108, 143, 208, 0.32)',
+    backgroundColor: 'rgba(15, 27, 58, 0.52)',
     borderRadius: 14,
     padding: 10,
     gap: 8,
   },
   annotatedPanelDark: {
-    borderColor: 'rgba(255, 214, 168, 0.2)',
-    backgroundColor: 'rgba(255, 214, 168, 0.05)',
+    borderColor: 'rgba(108, 143, 208, 0.32)',
+    backgroundColor: 'rgba(15, 27, 58, 0.52)',
   },
   annotatedHeaderRow: {
     flexDirection: 'row',
@@ -1332,8 +1461,8 @@ const cardStyles = StyleSheet.create({
     gap: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(209,101,44,0.14)',
-    backgroundColor: '#fff8ee',
+    borderColor: 'rgba(108, 143, 208, 0.28)',
+    backgroundColor: 'rgba(15, 27, 58, 0.62)',
     padding: 8,
   },
   annotatedRowDark: {

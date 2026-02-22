@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
+import { AnimatedAuroraBackground } from '@/components/animated-aurora-background';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth';
@@ -21,8 +22,12 @@ export default function LoginScreen() {
   const router = useRouter();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const handleSubmit = async () => {
@@ -59,157 +64,351 @@ export default function LoginScreen() {
   };
 
   return (
-    <LinearGradient colors={['#f4e6d8', '#fff8ee', '#e8f5f3']} style={styles.gradient}>
+    <AnimatedAuroraBackground>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.logoRow}>
-          <Ionicons name="mic" size={32} color="#d1652c" />
-          <ThemedText style={styles.appName}>SpeakSmart</ThemedText>
-        </View>
-
-        <ThemedText style={styles.headline}>
-          {mode === 'signin' ? 'Welcome back' : 'Create account'}
-        </ThemedText>
-        <ThemedText style={styles.subheadline}>
-          {mode === 'signin'
-            ? 'Sign in to track your progress over time.'
-            : 'Join to save your coaching sessions and track growth.'}
-        </ThemedText>
-
         <View style={styles.card}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#9a8272"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            editable={!busy}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#9a8272"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            editable={!busy}
-            onSubmitEditing={handleSubmit}
-            returnKeyType="go"
-          />
+          <View style={styles.brandBlock}>
+            <View style={styles.brandIconWrap}>
+              <Ionicons name="mic-outline" size={20} color="#30d7d4" />
+            </View>
+            <ThemedText style={styles.brandTitle}>SpeakSmart</ThemedText>
+            <ThemedText style={styles.brandSubtitle}>Your AI presentation coach</ThemedText>
+          </View>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.submitButton,
-              pressed && styles.buttonPressed,
-              busy && styles.buttonDisabled,
-            ]}
-            onPress={handleSubmit}
-            disabled={busy}>
-            <ThemedText style={styles.submitButtonText}>
-              {busy ? 'Please wait…' : mode === 'signin' ? 'Sign In' : 'Sign Up'}
-            </ThemedText>
-          </Pressable>
+          <View style={styles.form}>
+            {mode === 'signup' && (
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Full name</ThemedText>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Jane Doe"
+                  placeholderTextColor="#566384"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  editable={!busy}
+                  accessibilityLabel="Full name"
+                />
+              </View>
+            )}
 
-          <Pressable
-            style={styles.toggleRow}
-            onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}>
-            <ThemedText style={styles.toggleText}>
-              {mode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
-              <ThemedText style={styles.toggleLink}>
-                {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Email</ThemedText>
+              <TextInput
+                style={styles.input}
+                placeholder="you@example.com"
+                placeholderTextColor="#566384"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+                editable={!busy}
+                accessibilityLabel="Email address"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <ThemedText style={styles.label}>Password</ThemedText>
+              <View style={styles.passwordWrap}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="********"
+                  placeholderTextColor="#566384"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  editable={!busy}
+                  onSubmitEditing={handleSubmit}
+                  returnKeyType="go"
+                  accessibilityLabel="Password"
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                  onPress={() => setShowPassword((v) => !v)}
+                  style={styles.eyeButton}>
+                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#8291b3" />
+                </Pressable>
+              </View>
+            </View>
+
+            {mode === 'signup' && (
+              <View style={styles.inputGroup}>
+                <ThemedText style={styles.label}>Confirm password</ThemedText>
+                <View style={styles.passwordWrap}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="********"
+                    placeholderTextColor="#566384"
+                    secureTextEntry={!showConfirmPassword}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    editable={!busy}
+                    accessibilityLabel="Confirm password"
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                    onPress={() => setShowConfirmPassword((v) => !v)}
+                    style={styles.eyeButton}>
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={18}
+                      color="#8291b3"
+                    />
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {mode === 'signin' && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Forgot password, unavailable"
+                accessibilityState={{ disabled: true }}
+                disabled
+                style={styles.forgotButton}>
+                <ThemedText style={styles.forgotText}>Forgot password?</ThemedText>
+              </Pressable>
+            )}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={mode === 'signin' ? 'Sign in' : 'Create account'}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.primaryButtonPressed,
+                busy && styles.primaryButtonDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={busy}>
+              <LinearGradient colors={['#33c2cd', '#43d1c2']} style={styles.primaryGradient}>
+                <ThemedText style={styles.primaryButtonText}>
+                  {busy ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create account'}
+                </ThemedText>
+              </LinearGradient>
+            </Pressable>
+
+            {mode === 'signin' && (
+              <>
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <ThemedText style={styles.dividerText}>or</ThemedText>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
+                  style={({ pressed }) => [styles.googleButton, pressed && styles.googleButtonPressed]}>
+                  <ThemedText style={styles.googleG}>G</ThemedText>
+                  <ThemedText style={styles.googleButtonText}>Continue with Google</ThemedText>
+                </Pressable>
+              </>
+            )}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={mode === 'signin' ? 'Switch to sign up' : 'Switch to sign in'}
+              onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+              style={styles.toggleRow}>
+              <ThemedText style={styles.toggleText}>
+                {mode === 'signin' ? 'New here? ' : 'Already have an account? '}
+                <ThemedText style={styles.toggleLink}>
+                  {mode === 'signin' ? 'Create an account' : 'Sign in'}
+                </ThemedText>
               </ThemedText>
-            </ThemedText>
-          </Pressable>
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </AnimatedAuroraBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  gradient: {
-    flex: 1,
-  },
   container: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    gap: 12,
-  },
-  logoRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 4,
-  },
-  appName: {
-    fontFamily: Fonts.rounded,
-    fontSize: 28,
-    color: '#2f2219',
-  },
-  headline: {
-    fontFamily: Fonts.rounded,
-    fontSize: 26,
-    color: '#2f2219',
-  },
-  subheadline: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#6b5446',
-    marginBottom: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
   },
   card: {
-    backgroundColor: '#fff8ee',
+    width: '100%',
+    maxWidth: 540,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(77, 104, 160, 0.34)',
+    backgroundColor: 'rgba(18, 28, 61, 0.74)',
+    padding: 24,
+    shadowColor: '#060d1f',
+    shadowOpacity: 0.42,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 12,
+  },
+  brandBlock: {
+    alignItems: 'center',
+    marginBottom: 22,
+  },
+  brandIconWrap: {
+    width: 62,
+    height: 62,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e7c9a4',
-    padding: 20,
-    gap: 12,
-  },
-  input: {
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e7c9a4',
-    paddingHorizontal: 14,
-    fontSize: 15,
-    color: '#2f2219',
-    backgroundColor: '#fffcf5',
-    fontFamily: Fonts.sans,
-  },
-  submitButton: {
-    height: 50,
-    borderRadius: 14,
-    backgroundColor: '#d1652c',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(36, 122, 176, 0.4)',
+    marginBottom: 14,
+  },
+  brandTitle: {
+    color: '#e9efff',
+    fontFamily: Fonts.serif,
+    fontSize: 54,
+    lineHeight: 60,
+    textAlign: 'center',
+  },
+  brandSubtitle: {
     marginTop: 4,
+    color: '#8897b8',
+    fontFamily: Fonts.sans,
+    fontSize: 15,
+    lineHeight: 21,
   },
-  submitButtonText: {
-    color: '#fff6e9',
+  form: {
+    gap: 14,
+  },
+  inputGroup: {
+    gap: 9,
+  },
+  label: {
+    color: '#c8d2e8',
     fontFamily: Fonts.rounded,
-    fontSize: 16,
+    fontSize: 15,
   },
-  buttonPressed: {
-    opacity: 0.82,
+  input: {
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(76, 98, 146, 0.44)',
+    backgroundColor: 'rgba(44, 53, 84, 0.46)',
+    paddingHorizontal: 14,
+    color: '#e5eeff',
+    fontSize: 15,
+    fontFamily: Fonts.sans,
   },
-  buttonDisabled: {
-    opacity: 0.5,
+  passwordWrap: {
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(76, 98, 146, 0.44)',
+    backgroundColor: 'rgba(44, 53, 84, 0.46)',
+    paddingLeft: 14,
+    paddingRight: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    color: '#e5eeff',
+    fontSize: 15,
+    fontFamily: Fonts.sans,
+  },
+  eyeButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  forgotButton: {
+    alignSelf: 'flex-end',
+    minHeight: 24,
+    justifyContent: 'center',
+    marginTop: -2,
+  },
+  forgotText: {
+    color: '#7f8dad',
+    fontFamily: Fonts.sans,
+    fontSize: 14,
+  },
+  primaryButton: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginTop: 2,
+  },
+  primaryGradient: {
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
+  primaryButtonText: {
+    color: '#00141f',
+    fontFamily: Fonts.rounded,
+    fontSize: 23,
+  },
+  primaryButtonPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.995 }],
+  },
+  primaryButtonDisabled: {
+    opacity: 0.62,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(70, 89, 132, 0.4)',
+  },
+  dividerText: {
+    color: '#7686a7',
+    fontFamily: Fonts.sans,
+    fontSize: 14,
+    paddingHorizontal: 12,
+  },
+  googleButton: {
+    height: 56,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(75, 95, 142, 0.42)',
+    backgroundColor: 'rgba(26, 37, 70, 0.5)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 11,
+  },
+  googleButtonPressed: {
+    opacity: 0.9,
+  },
+  googleG: {
+    color: '#fbbf24',
+    fontFamily: Fonts.rounded,
+    fontSize: 21,
+    lineHeight: 24,
+  },
+  googleButtonText: {
+    color: '#e4ecfe',
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
   },
   toggleRow: {
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingTop: 12,
+    paddingBottom: 2,
   },
   toggleText: {
-    fontSize: 14,
-    color: '#6b5446',
+    color: '#8192b5',
     fontFamily: Fonts.sans,
+    fontSize: 14,
   },
   toggleLink: {
-    color: '#d1652c',
+    color: '#30d7d4',
     fontFamily: Fonts.rounded,
   },
 });

@@ -12,12 +12,6 @@ import {
   type PracticeHistoryEntry,
 } from '@/lib/practice-history';
 
-declare global {
-  interface Navigator {
-    mediaDevices: any;
-  }
-}
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DrillMode = 'qa' | 'filler' | 'paragraph' | 'topic';
@@ -68,17 +62,17 @@ const BACKEND_URL =
   }) ?? 'http://localhost:8000';
 
 const palette = {
-  accent: '#d1652c',
-  accentDeep: '#b54f1b',
+  accent: '#39c8cf',
+  accentDeep: '#1c8fa3',
   mint: '#17998a',
-  lightCanvas: '#f6ede2',
-  darkCanvas: '#1b1510',
-  lightCard: '#fff8ee',
-  darkCard: '#2a211b',
-  lightInk: '#2f2219',
-  darkInk: '#f2e4d1',
-  borderLight: '#e7c9a4',
-  borderDark: 'rgba(255, 214, 168, 0.28)',
+  lightCanvas: '#141d3f',
+  darkCanvas: '#141d3f',
+  lightCard: '#1b2550',
+  darkCard: '#1b2550',
+  lightInk: '#e8effd',
+  darkInk: '#e8effd',
+  borderLight: 'rgba(108, 143, 208, 0.36)',
+  borderDark: 'rgba(108, 143, 208, 0.36)',
 };
 
 const PRESETS = [

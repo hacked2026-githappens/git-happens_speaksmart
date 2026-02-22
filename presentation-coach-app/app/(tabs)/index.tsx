@@ -1,25 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/contexts/auth';
 import { saveSession } from '@/lib/database';
-
-// TypeScript definitions for web-specific globals
-declare global {
-  interface Navigator {
-    mediaDevices: any;
-  }
-}
+import { clearWebCoachDraft } from '@/lib/web-coach-draft';
+import { clearWebVideoDraft } from '@/lib/web-video-draft';
 
 type Marker = {
   time_sec: number;
@@ -96,6 +89,7 @@ type FollowUpAnswerEvalResponse = {
 };
 
 type ButtonTone = 'primary' | 'secondary' | 'neutral';
+type CoachTab = 'upload' | 'report' | 'improvements' | 'transcript';
 
 type ActionButtonProps = {
   label: string;
@@ -113,17 +107,17 @@ const BACKEND_URL =
   }) ?? 'http://localhost:8000';
 
 const palette = {
-  accent: '#d1652c',
-  accentDeep: '#b54f1b',
-  mint: '#17998a',
-  lightCanvas: '#f6ede2',
-  darkCanvas: '#1b1510',
-  lightCard: '#fff8ee',
-  darkCard: '#2a211b',
-  lightInk: '#2f2219',
-  darkInk: '#f2e4d1',
-  borderLight: '#e7c9a4',
-  borderDark: 'rgba(255, 214, 168, 0.28)',
+  accent: '#39c8cf',
+  accentDeep: '#1c8fa3',
+  mint: '#2ac0a8',
+  lightCanvas: '#141d3f',
+  darkCanvas: '#141d3f',
+  lightCard: '#1b2550',
+  darkCard: '#1b2550',
+  lightInk: '#e8effd',
+  darkInk: '#e8effd',
+  borderLight: 'rgba(108, 143, 208, 0.36)',
+  borderDark: 'rgba(108, 143, 208, 0.36)',
 };
 
 function formatSeconds(seconds: number): string {
@@ -212,9 +206,8 @@ const PRESETS = [
 ];
 
 export default function HomeScreen() {
-  const colorScheme = useColorScheme() ?? 'light';
-  const isDark = colorScheme === 'dark';
-  const { user, signOut } = useAuth();
+  const isDark = true;
+  const { user } = useAuth();
 
   const [preset, setPreset] = useState<'general' | 'pitch' | 'classroom' | 'interview' | 'keynote'>('general');
 
@@ -230,7 +223,7 @@ export default function HomeScreen() {
   const [recordStart, setRecordStart] = useState<number | null>(null);
   const [recordElapsedSeconds, setRecordElapsedSeconds] = useState(0);
   const [showContentPlan, setShowContentPlan] = useState(false);
-  const [showTranscript, setShowTranscript] = useState(false);
+  const [coachTab, setCoachTab] = useState<CoachTab>('upload');
   const [questionBusy, setQuestionBusy] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
 
@@ -248,6 +241,7 @@ export default function HomeScreen() {
   const [answerRecording, setAnswerRecording] = useState(false);
   const [answerRecordStart, setAnswerRecordStart] = useState<number | null>(null);
   const [answerRecordElapsedSeconds, setAnswerRecordElapsedSeconds] = useState(0);
+  const restoredObjectUrlRef = useRef<string | null>(null);
 
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const previewRef = React.useRef<HTMLVideoElement | null>(null);
@@ -288,9 +282,16 @@ export default function HomeScreen() {
     const update = async () => {
       if (videoUri && player) {
         try {
-          const status = await player.getStatusAsync();
-          if (status.isLoaded && status.durationMillis != null) {
-            setVideoDuration(status.durationMillis / 1000);
+          const playerAny = player as any;
+          if (typeof playerAny.duration === 'number' && playerAny.duration > 0) {
+            setVideoDuration(playerAny.duration);
+            return;
+          }
+          if (typeof playerAny.getStatusAsync === 'function') {
+            const status = await playerAny.getStatusAsync();
+            if (status?.isLoaded && status.durationMillis != null) {
+              setVideoDuration(status.durationMillis / 1000);
+            }
           }
         } catch (error) {
           console.warn('could not read duration from player', error);
@@ -304,9 +305,16 @@ export default function HomeScreen() {
     const update = async () => {
       if (answerVideoUri && answerPlayer) {
         try {
-          const status = await answerPlayer.getStatusAsync();
-          if (status.isLoaded && status.durationMillis != null) {
-            setAnswerVideoDuration(status.durationMillis / 1000);
+          const playerAny = answerPlayer as any;
+          if (typeof playerAny.duration === 'number' && playerAny.duration > 0) {
+            setAnswerVideoDuration(playerAny.duration);
+            return;
+          }
+          if (typeof playerAny.getStatusAsync === 'function') {
+            const status = await playerAny.getStatusAsync();
+            if (status?.isLoaded && status.durationMillis != null) {
+              setAnswerVideoDuration(status.durationMillis / 1000);
+            }
           }
         } catch (error) {
           console.warn('could not read duration from answer player', error);
@@ -343,6 +351,62 @@ export default function HomeScreen() {
 
     return () => clearInterval(tick);
   }, [answerRecording, answerRecordStart]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      return () => {
+        setVideoUri(null);
+        setVideoName('');
+        setVideoDuration(null);
+        setBusy(false);
+        setFeedback(null);
+        setShowContentPlan(false);
+        setCoachTab('upload');
+        setRecordStart(null);
+        setRecordElapsedSeconds(0);
+        setRecording(false);
+        setQuestionBusy(false);
+        setFollowUpQuestion(null);
+        setAnswerVideoUri(null);
+        setAnswerVideoName('');
+        setAnswerVideoDuration(null);
+        setAnswerBusy(false);
+        setAnswerFeedback(null);
+        setAnswerCorrectness(null);
+        setAnswerShowTranscript(false);
+        setAnswerRecordStart(null);
+        setAnswerRecordElapsedSeconds(0);
+        setAnswerRecording(false);
+
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+        mediaRecorderRef.current = null;
+        if (previewRef.current) {
+          previewRef.current.srcObject = null;
+        }
+        answerMediaRecorderRef.current = null;
+        if (answerPreviewRef.current) {
+          answerPreviewRef.current.srcObject = null;
+        }
+        if (answerStreamRef.current) {
+          answerStreamRef.current.getTracks().forEach((track) => track.stop());
+          answerStreamRef.current = null;
+        }
+
+        if (restoredObjectUrlRef.current) {
+          URL.revokeObjectURL(restoredObjectUrlRef.current);
+          restoredObjectUrlRef.current = null;
+        }
+
+        if (Platform.OS === 'web') {
+          clearWebCoachDraft();
+          clearWebVideoDraft().catch(() => {});
+        }
+      };
+    }, []),
+  );
 
   React.useEffect(() => {
     if (Platform.OS === 'web' && recording && streamRef.current && previewRef.current) {
@@ -506,6 +570,8 @@ export default function HomeScreen() {
     ];
   }, [answerFeedback]);
 
+  const hasExtendedContent = Boolean(videoUri || recording || feedback || followUpQuestion || answerFeedback);
+
   const pickVideo = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
@@ -513,11 +579,26 @@ export default function HomeScreen() {
 
     if (!result.canceled) {
       const asset = result.assets[0];
-      setVideoUri(asset.uri);
-      setVideoName(asset.fileName ?? asset.uri.split('/').pop() ?? 'selected-video');
-      setVideoDuration(asset.duration ? asset.duration / 1000 : null);
+      const duration = asset.duration ? asset.duration / 1000 : null;
+
+      if (Platform.OS === 'web') {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        if (restoredObjectUrlRef.current) {
+          URL.revokeObjectURL(restoredObjectUrlRef.current);
+        }
+        const objectUrl = URL.createObjectURL(blob);
+        restoredObjectUrlRef.current = objectUrl;
+        setVideoUri(objectUrl);
+        setVideoName(asset.fileName ?? 'selected-video.webm');
+        setVideoDuration(duration);
+      } else {
+        setVideoUri(asset.uri);
+        setVideoName(asset.fileName ?? asset.uri.split('/').pop() ?? 'selected-video');
+        setVideoDuration(duration);
+      }
+
       setFeedback(null);
-      setShowTranscript(false);
       resetFollowUpFlow();
     }
   };
@@ -553,6 +634,10 @@ export default function HomeScreen() {
         recorder.onstop = () => {
           const blob = new Blob(chunks, { type: 'video/webm' });
           const url = URL.createObjectURL(blob);
+          if (restoredObjectUrlRef.current) {
+            URL.revokeObjectURL(restoredObjectUrlRef.current);
+          }
+          restoredObjectUrlRef.current = url;
           setVideoUri(url);
           setVideoName('recorded.webm');
 
@@ -560,15 +645,15 @@ export default function HomeScreen() {
           probe.preload = 'metadata';
           probe.src = url;
           probe.onloadedmetadata = () => {
-          setVideoDuration(probe.duration);
-          URL.revokeObjectURL(probe.src);
-        };
+            const duration = probe.duration;
+            setVideoDuration(duration);
+            URL.revokeObjectURL(probe.src);
+          };
 
-        setFeedback(null);
-        setShowTranscript(false);
-        resetFollowUpFlow();
-        stream.getTracks().forEach((track) => track.stop());
-        mediaRecorderRef.current = null;
+          setFeedback(null);
+          resetFollowUpFlow();
+          stream.getTracks().forEach((track) => track.stop());
+          mediaRecorderRef.current = null;
           if (previewRef.current) {
             previewRef.current.srcObject = null;
           }
@@ -594,7 +679,6 @@ export default function HomeScreen() {
       setVideoName(asset.fileName ?? asset.uri.split('/').pop() ?? 'recorded-video');
       setVideoDuration(asset.duration ? asset.duration / 1000 : null);
       setFeedback(null);
-      setShowTranscript(false);
       resetFollowUpFlow();
     }
   };
@@ -661,6 +745,7 @@ export default function HomeScreen() {
       const api = await pollResults(jobId);
       const mapped = mapAnalyzePayload(api);
       setFeedback(mapped);
+      setCoachTab('report');
       setShowContentPlan(false);
 
       // Fire-and-forget: save session to Supabase if user is logged in
@@ -946,90 +1031,76 @@ export default function HomeScreen() {
   };
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#f4e6d8', dark: '#251a12' }}
-      headerImage={
-        <LinearGradient colors={['#ffba62', '#f0814f', '#2ab4a3']} style={styles.hero}>
-          <View style={styles.heroOrbOne} />
-          <View style={styles.heroOrbTwo} />
-          <View style={styles.heroPill}>
-            <Ionicons name="sparkles-outline" size={14} color="#fff6e8" />
-            <ThemedText style={styles.heroPillText}>SpeakSmart Coach</ThemedText>
-          </View>
-          <ThemedText style={styles.heroTitle}>Practice with sharper feedback</ThemedText>
-          <ThemedText style={styles.heroSubtitle}>
-            Upload or record your presentation and get timestamped coaching in under a minute.
-          </ThemedText>
-          <View style={styles.heroStepsRow}>
-            <View style={styles.heroStepItem}>
-              <Ionicons name="videocam-outline" size={14} color="#fff9f0" />
-              <ThemedText style={styles.heroStepText}>Capture</ThemedText>
-            </View>
-            <View style={styles.heroStepItem}>
-              <Ionicons name="analytics-outline" size={14} color="#fff9f0" />
-              <ThemedText style={styles.heroStepText}>Analyze</ThemedText>
-            </View>
-            <View style={styles.heroStepItem}>
-              <Ionicons name="trending-up-outline" size={14} color="#fff9f0" />
-              <ThemedText style={styles.heroStepText}>Improve</ThemedText>
-            </View>
-          </View>
-        </LinearGradient>
-      }>
-      <ThemedView style={styles.page} lightColor={palette.lightCanvas} darkColor={palette.darkCanvas}>
+    <View style={styles.screen}>
+      <ThemedView style={styles.mainArea} lightColor={palette.lightCanvas} darkColor={palette.darkCanvas}>
+        <ScrollView
+          style={styles.scrollArea}
+          contentContainerStyle={styles.page}
+          scrollEnabled={hasExtendedContent}
+          bounces={hasExtendedContent}
+          showsVerticalScrollIndicator={hasExtendedContent}>
+        {coachTab === 'upload' && (
         <Animated.View entering={FadeInDown.duration(420).springify().damping(18)}>
-          <ThemedView style={styles.card} lightColor={palette.lightCard} darkColor={palette.darkCard}>
-            <View style={styles.cardHeaderRow}>
-              <View style={styles.cardHeaderLabel}>
-                <Ionicons name="film-outline" size={18} color={palette.accentDeep} />
-                <ThemedText style={styles.cardHeaderText}>Your Practice Clip</ThemedText>
-              </View>
-              <View style={styles.cardHeaderRight}>
-                {videoUri ? (
-                  <View style={styles.statusBadge}>
-                    <Ionicons name="checkmark-circle" size={14} color="#fef5ea" />
-                    <ThemedText style={styles.statusBadgeText}>Ready</ThemedText>
-                  </View>
-                ) : (
-                  <View style={[styles.statusBadge, styles.statusBadgeMuted]}>
-                    <ThemedText style={styles.statusBadgeTextMuted}>Waiting for video</ThemedText>
-                  </View>
-                )}
+          <View style={styles.uploadSection}>
+            <ThemedText style={styles.uploadTitle}>Coach</ThemedText>
+            <ThemedText style={styles.uploadSubtitle}>
+              Upload a recording or record yourself to get AI-powered feedback.
+            </ThemedText>
+
+            <View style={styles.uploadToggleRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Upload a clip"
+                style={({ pressed }) => [
+                  styles.uploadToggleBtn,
+                  styles.uploadToggleBtnActive,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={pickVideo}>
+                <Ionicons name="cloud-upload-outline" size={15} color="#eaf4ff" />
+                <ThemedText style={styles.uploadToggleTextActive}>
+                  {videoUri ? 'Replace' : 'Upload'}
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Record a clip"
+                style={({ pressed }) => [styles.uploadToggleBtn, pressed && styles.buttonPressed]}
+                onPress={recordVideo}
+                disabled={Platform.OS === 'web' && answerRecording}>
+                <Ionicons
+                  name={Platform.OS === 'web' && recording ? 'stop-circle-outline' : 'videocam-outline'}
+                  size={15}
+                  color="#b9cdea"
+                />
+                <ThemedText style={styles.uploadToggleText}>
+                  {Platform.OS === 'web' && recording ? 'Stop' : 'Record'}
+                </ThemedText>
+              </Pressable>
+            </View>
+
+            {!videoUri && !(Platform.OS === 'web' && recording) && (
+              <View style={styles.dropZone}>
+                <View style={styles.dropZoneIconWrap}>
+                  <Ionicons name="cloud-upload-outline" size={28} color="#52d1d7" />
+                </View>
+                <ThemedText style={styles.dropZoneTitle}>Drag & drop your video here</ThemedText>
+                <ThemedText style={styles.dropZoneText}>
+                  Supports MP4, MOV, and WebM files. Your video will be analyzed for speaking
+                  patterns and confidence.
+                </ThemedText>
                 <Pressable
-                  onPress={() => {
-                    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Sign Out', style: 'destructive', onPress: signOut },
-                    ]);
-                  }}
-                  style={({ pressed }) => [styles.signOutButton, pressed && styles.buttonPressed]}
-                  accessibilityLabel="Sign out"
-                  accessibilityRole="button">
-                  <Ionicons name="log-out-outline" size={20} color={palette.accentDeep} />
+                  accessibilityRole="button"
+                  accessibilityLabel="Browse video files"
+                  onPress={pickVideo}
+                  style={({ pressed }) => [styles.browseButton, pressed && styles.buttonPressed]}>
+                  <ThemedText style={styles.browseButtonText}>Browse Files</ThemedText>
                 </Pressable>
               </View>
-            </View>
-
-            <View style={styles.presetRow}>
-              {PRESETS.map(({ key, label, icon }) => {
-                const active = preset === key;
-                return (
-                  <Pressable
-                    key={key}
-                    onPress={() => { setPreset(key); setFeedback(null); resetFollowUpFlow(); }}
-                    style={[styles.presetPill, active && styles.presetPillActive]}
-                  >
-                    <Ionicons name={icon} size={13} color={active ? '#fff' : palette.accentDeep} />
-                    <ThemedText style={[styles.presetLabel, active && styles.presetLabelActive]}>
-                      {label}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </View>
+            )}
 
             {!!videoUri && (
-              <View style={styles.clipBlock}>
+              <View style={[styles.dropZone, styles.dropZoneFilled]}>
                 <View style={styles.videoWrap}>
                   <VideoView
                     style={styles.video}
@@ -1039,8 +1110,8 @@ export default function HomeScreen() {
                     nativeControls
                   />
                 </View>
-                <View style={[styles.fileMetaRow, isDark && styles.fileMetaRowDark]}>
-                  <Ionicons name="document-text-outline" size={16} color={palette.accentDeep} />
+                <View style={styles.fileMetaRow}>
+                  <Ionicons name="document-text-outline" size={16} color={palette.accent} />
                   <ThemedText numberOfLines={1} style={styles.fileNameText}>
                     {videoName}
                   </ThemedText>
@@ -1052,7 +1123,7 @@ export default function HomeScreen() {
             )}
 
             {Platform.OS === 'web' && recording && (
-              <View style={styles.recordingBlock}>
+              <View style={[styles.dropZone, styles.dropZoneFilled]}>
                 <video
                   ref={previewRef as any}
                   style={styles.webPreview as any}
@@ -1069,62 +1140,102 @@ export default function HomeScreen() {
               </View>
             )}
 
-            <View style={styles.buttonGrid}>
-              <ActionButton
-                label={videoUri ? 'Replace Clip' : 'Upload Clip'}
-                icon="cloud-upload-outline"
-                onPress={pickVideo}
-                disabled={Platform.OS === 'web' && (recording || answerRecording)}
-                tone="neutral"
-              />
-              <ActionButton
-                label={
-                  Platform.OS === 'web' && recording
-                    ? 'Stop Capture'
-                    : videoUri
-                    ? 'Record Again'
-                    : 'Record Clip'
-                }
-                icon={Platform.OS === 'web' && recording ? 'stop-circle-outline' : 'videocam-outline'}
-                onPress={recordVideo}
-                disabled={Platform.OS === 'web' && answerRecording}
-                tone={Platform.OS === 'web' && recording ? 'secondary' : 'primary'}
-              />
+            <View style={styles.presetRow}>
+              {PRESETS.map(({ key, label, icon }) => {
+                const active = preset === key;
+                return (
+                  <Pressable
+                    key={key}
+                    onPress={() => {
+                      setPreset(key);
+                      setFeedback(null);
+                      resetFollowUpFlow();
+                    }}
+                    style={[styles.presetPill, active && styles.presetPillActive]}>
+                    <Ionicons name={icon} size={13} color={active ? '#fff' : palette.accentDeep} />
+                    <ThemedText style={[styles.presetLabel, active && styles.presetLabelActive]}>
+                      {label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
             </View>
 
-            <ActionButton
-              label={busy ? 'Analyzing...' : 'Run AI Coach'}
-              icon={busy ? 'hourglass-outline' : 'sparkles-outline'}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Run AI coach"
               onPress={analyze}
               disabled={!videoUri || busy || questionBusy || answerBusy}
-              tone="secondary"
-            />
-          </ThemedView>
+              style={({ pressed }) => [
+                styles.runCoachButton,
+                (!videoUri || busy || questionBusy || answerBusy) && styles.buttonDisabled,
+                pressed && styles.buttonPressed,
+              ]}>
+              <Ionicons name={busy ? 'hourglass-outline' : 'sparkles-outline'} size={16} color="#04313c" />
+              <ThemedText style={styles.runCoachButtonText}>
+                {busy ? 'Analyzing...' : 'Run AI Coach'}
+              </ThemedText>
+            </Pressable>
+          </View>
         </Animated.View>
+        )}
 
-        {!!feedback && (
+        {coachTab !== 'upload' && (
           <Animated.View entering={FadeInDown.duration(520).delay(80).springify().damping(17)}>
             <ThemedView style={styles.card} lightColor={palette.lightCard} darkColor={palette.darkCard}>
               <View style={styles.cardHeaderRow}>
                 <View style={styles.cardHeaderLabel}>
                   <Ionicons name="chatbubbles-outline" size={18} color={palette.mint} />
-                  <ThemedText style={styles.cardHeaderText}>Coach Report</ThemedText>
+                  <ThemedText style={styles.cardHeaderText}>
+                    {coachTab === 'report'
+                      ? 'Coach Report'
+                      : coachTab === 'improvements'
+                      ? 'Topic-Specific Improvements'
+                      : 'Transcript'}
+                  </ThemedText>
                 </View>
-                {!!feedback.llm?.feedbackEvents?.length && (
+                {!!feedback?.llm?.feedbackEvents?.length && coachTab === 'report' && (
                   <View style={styles.eventPill}>
                     <ThemedText style={styles.eventPillText}>
-                      {feedback.llm.feedbackEvents.length} insight
-                      {feedback.llm.feedbackEvents.length === 1 ? '' : 's'}
+                      {feedback?.llm?.feedbackEvents.length} insight
+                      {feedback?.llm?.feedbackEvents.length === 1 ? '' : 's'}
                     </ThemedText>
                   </View>
                 )}
               </View>
 
-              <View style={[styles.summaryPanel, isDark && styles.summaryPanelDark]}>
-                <ThemedText style={styles.summaryText}>{feedback.summary}</ThemedText>
-              </View>
+              <Animated.View
+                key={`analysis-${coachTab}`}
+                entering={FadeInDown.duration(220)}
+                style={styles.analysisTabBody}>
+              {!feedback && (
+                <View style={styles.emptyTabPanel}>
+                  <ThemedText style={styles.emptyTabText}>
+                    No video has been uploaded and analyzed yet.
+                  </ThemedText>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Go to upload menu"
+                    onPress={() => setCoachTab('upload')}
+                    style={({ pressed }) => [styles.emptyTabAction, pressed && styles.buttonPressed]}>
+                    <ThemedText style={styles.emptyTabActionText}>Open Upload Menu</ThemedText>
+                  </Pressable>
+                </View>
+              )}
 
-              {!!paceState && typeof feedback.metrics?.words_per_minute === 'number' && (
+              {!!feedback && (
+              <>
+              {coachTab === 'report' && (
+                <Animated.View entering={FadeInDown.duration(180)}>
+                  <View style={[styles.summaryPanel, isDark && styles.summaryPanelDark]}>
+                    <ThemedText style={styles.summaryText}>{feedback.summary}</ThemedText>
+                  </View>
+                </Animated.View>
+              )}
+
+              {coachTab === 'report' &&
+                !!paceState &&
+                typeof feedback.metrics?.words_per_minute === 'number' && (
                 <View style={styles.pacePanel}>
                   <View style={styles.paceHeaderRow}>
                     <ThemedText style={styles.paceLabel}>Delivery pace</ThemedText>
@@ -1138,7 +1249,7 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!audioInsights && (
+              {coachTab === 'report' && !!audioInsights && (
                 <View style={[styles.audioPanel, isDark && styles.audioPanelDark]}>
                   <View style={styles.audioHeaderRow}>
                     <Ionicons name="volume-high-outline" size={18} color={palette.accentDeep} />
@@ -1270,7 +1381,7 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!llmScoreCards.length && (
+              {coachTab === 'report' && !!llmScoreCards.length && (
                 <View style={styles.scoreGrid}>
                   {llmScoreCards.map((score) => (
                     <View key={score.label} style={[styles.scoreCard, isDark && styles.scoreCardDark]}>
@@ -1281,7 +1392,7 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!feedback.bullets?.length && (
+              {coachTab === 'report' && !!feedback.bullets?.length && (
                 <View style={styles.listSection}>
                   <ThemedText style={styles.sectionTitle}>Summary bullets</ThemedText>
                   {feedback.bullets.map((bullet, index) => (
@@ -1293,7 +1404,7 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!feedback.llm?.improvements?.length && (
+              {coachTab === 'improvements' && !!feedback.llm?.improvements?.length && (
                 <View style={styles.listSection}>
                   <ThemedText style={styles.sectionTitle}>Focus next</ThemedText>
                   {feedback.llm.improvements.map((improvement, index) => (
@@ -1307,7 +1418,8 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!feedback.personalizedContentPlan?.improvements?.length && (
+              {coachTab === 'improvements' &&
+                !!feedback.personalizedContentPlan?.improvements?.length && (
                 <View style={[styles.contentPlanPanel, isDark && styles.contentPlanPanelDark]}>
                   <Pressable
                     accessibilityRole="button"
@@ -1396,7 +1508,7 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!feedback.markers?.length && (
+              {coachTab === 'report' && !!feedback.markers?.length && (
                 <View style={[styles.annotatedPanel, isDark && styles.annotatedPanelDark]}>
                   <View style={styles.annotatedHeaderRow}>
                     <ThemedText style={styles.sectionTitle}>Annotated moments</ThemedText>
@@ -1420,39 +1532,32 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {!!feedback.transcript && (
+              {coachTab === 'transcript' && !!feedback.transcript && (
                 <View style={[styles.transcriptPanel, isDark && styles.transcriptPanelDark]}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Toggle transcript"
-                    onPress={() => setShowTranscript((previous) => !previous)}
-                    style={({ pressed }) => [styles.transcriptToggle, pressed && styles.buttonPressed]}>
+                  <View style={styles.transcriptToggle}>
                     <ThemedText style={styles.sectionTitle}>Transcript</ThemedText>
-                    <Ionicons
-                      name={showTranscript ? 'chevron-up-outline' : 'chevron-down-outline'}
-                      size={18}
-                      color={palette.accentDeep}
-                    />
-                  </Pressable>
-                  {showTranscript && <ThemedText style={styles.transcriptText}>{feedback.transcript}</ThemedText>}
+                  </View>
+                  <ThemedText style={styles.transcriptText}>{feedback.transcript}</ThemedText>
                 </View>
               )}
 
-              <ActionButton
-                label={
-                  questionBusy
-                    ? 'Generating question...'
-                    : followUpQuestion
-                    ? 'Regenerate Follow-up Question'
-                    : 'Get Follow-up Question'
-                }
-                icon={questionBusy ? 'hourglass-outline' : 'help-circle-outline'}
-                onPress={generateFollowUpQuestion}
-                disabled={questionBusy || busy}
-                tone="primary"
-              />
+              {coachTab === 'report' && (
+                <ActionButton
+                  label={
+                    questionBusy
+                      ? 'Generating question...'
+                      : followUpQuestion
+                      ? 'Regenerate Follow-up Question'
+                      : 'Get Follow-up Question'
+                  }
+                  icon={questionBusy ? 'hourglass-outline' : 'help-circle-outline'}
+                  onPress={generateFollowUpQuestion}
+                  disabled={questionBusy || busy}
+                  tone="primary"
+                />
+              )}
 
-              {!!followUpQuestion && (
+              {coachTab === 'report' && !!followUpQuestion && (
                 <View style={[styles.followUpPanel, isDark && styles.followUpPanelDark]}>
                   <View style={styles.followUpHeader}>
                     <Ionicons name="help-buoy-outline" size={16} color={palette.accentDeep} />
@@ -1700,101 +1805,287 @@ export default function HomeScreen() {
                   )}
                 </View>
               )}
+              </>
+              )}
+              </Animated.View>
             </ThemedView>
           </Animated.View>
         )}
+        </ScrollView>
+        <View style={styles.bottomTabDock}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open upload menu tab"
+            onPress={() => setCoachTab('upload')}
+            style={[
+              styles.bottomTabButton,
+              coachTab === 'upload' && styles.bottomTabButtonActive,
+            ]}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={15}
+              color={coachTab === 'upload' ? '#eaf4ff' : '#8fb0da'}
+            />
+            <ThemedText
+              style={[
+                styles.bottomTabLabel,
+                coachTab === 'upload' && styles.bottomTabLabelActive,
+              ]}>
+              Upload Menu
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open coach report tab"
+            onPress={() => setCoachTab('report')}
+            style={[
+              styles.bottomTabButton,
+              coachTab === 'report' && styles.bottomTabButtonActive,
+            ]}>
+            <Ionicons
+              name="chatbubbles-outline"
+              size={15}
+              color={coachTab === 'report' ? '#eaf4ff' : '#8fb0da'}
+            />
+            <ThemedText
+              style={[
+                styles.bottomTabLabel,
+                coachTab === 'report' && styles.bottomTabLabelActive,
+              ]}>
+              Coach Report
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open topic-specific improvements tab"
+            onPress={() => {
+              setCoachTab('improvements');
+              setShowContentPlan(true);
+            }}
+            style={[
+              styles.bottomTabButton,
+              coachTab === 'improvements' && styles.bottomTabButtonActive,
+            ]}>
+            <Ionicons
+              name="sparkles-outline"
+              size={15}
+              color={coachTab === 'improvements' ? '#eaf4ff' : '#8fb0da'}
+            />
+            <ThemedText
+              style={[
+                styles.bottomTabLabel,
+                coachTab === 'improvements' && styles.bottomTabLabelActive,
+              ]}>
+              Topic Fixes
+            </ThemedText>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open transcript tab"
+            onPress={() => setCoachTab('transcript')}
+            style={[
+              styles.bottomTabButton,
+              coachTab === 'transcript' && styles.bottomTabButtonActive,
+            ]}>
+            <Ionicons
+              name="document-text-outline"
+              size={15}
+              color={coachTab === 'transcript' ? '#eaf4ff' : '#8fb0da'}
+            />
+            <ThemedText
+              style={[
+                styles.bottomTabLabel,
+                coachTab === 'transcript' && styles.bottomTabLabelActive,
+              ]}>
+              Transcript
+            </ThemedText>
+          </Pressable>
+        </View>
       </ThemedView>
-    </ParallaxScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: {
+  screen: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    justifyContent: 'center',
-    gap: 10,
-    overflow: 'hidden',
-  },
-  heroOrbOne: {
-    position: 'absolute',
-    top: -32,
-    right: -24,
-    width: 120,
-    height: 120,
-    borderRadius: 80,
-    backgroundColor: 'rgba(255, 248, 233, 0.22)',
-  },
-  heroOrbTwo: {
-    position: 'absolute',
-    bottom: 16,
-    left: -30,
-    width: 120,
-    height: 120,
-    borderRadius: 70,
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
-  },
-  heroPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.16)',
-  },
-  heroPillText: {
-    color: '#fff6e8',
-    fontSize: 12,
-    letterSpacing: 0.5,
-    fontFamily: Fonts.rounded,
-  },
-  heroTitle: {
-    color: '#fffaf2',
-    fontFamily: Fonts.rounded,
-    fontSize: 30,
-    lineHeight: 34,
-    maxWidth: 420,
-  },
-  heroSubtitle: {
-    color: 'rgba(255, 251, 243, 0.92)',
-    fontFamily: Fonts.sans,
-    fontSize: 15,
-    lineHeight: 22,
-    maxWidth: 560,
-  },
-  heroStepsRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  heroStepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: 'rgba(0, 0, 0, 0.16)',
-  },
-  heroStepText: {
-    color: '#fff7ee',
-    fontFamily: Fonts.rounded,
-    fontSize: 12,
-    lineHeight: 14,
+    backgroundColor: '#141d3f',
   },
   page: {
     width: '100%',
-    maxWidth: 900,
-    alignSelf: 'center',
+    alignSelf: 'stretch',
     paddingHorizontal: 18,
-    paddingBottom: 30,
+    paddingTop: 16,
+    paddingBottom: 110,
     gap: 16,
   },
+  mainArea: {
+    flex: 1,
+  },
+  scrollArea: {
+    flex: 1,
+  },
+  bottomTabDock: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    bottom: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 143, 208, 0.42)',
+    backgroundColor: 'rgba(10, 20, 44, 0.88)',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  bottomTabButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: 'rgba(20, 36, 73, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 8,
+  },
+  bottomTabButtonActive: {
+    backgroundColor: 'rgba(44, 132, 175, 0.54)',
+    borderColor: 'rgba(90, 195, 228, 0.45)',
+  },
+  bottomTabLabel: {
+    color: '#8fb0da',
+    fontFamily: Fonts.rounded,
+    fontSize: 12,
+  },
+  bottomTabLabelActive: {
+    color: '#eaf4ff',
+  },
+  uploadSection: {
+    width: '60%',
+    maxWidth: 820,
+    alignSelf: 'center',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(98, 133, 204, 0.42)',
+    backgroundColor: '#ffffff',
+    padding: 16,
+    gap: 10,
+  },
+  uploadTitle: {
+    color: '#152a58',
+    fontFamily: Fonts.rounded,
+    fontSize: 34,
+    lineHeight: 38,
+  },
+  uploadSubtitle: {
+    color: '#4d6590',
+    fontFamily: Fonts.sans,
+    fontSize: 15,
+    lineHeight: 22,
+    maxWidth: 620,
+  },
+  uploadToggleRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  uploadToggleBtn: {
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 143, 208, 0.36)',
+    backgroundColor: 'rgba(24, 36, 73, 0.72)',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  uploadToggleBtnActive: {
+    backgroundColor: 'rgba(54, 112, 190, 0.7)',
+    borderColor: 'rgba(112, 186, 255, 0.45)',
+  },
+  uploadToggleText: {
+    color: '#b9cdea',
+    fontFamily: Fonts.rounded,
+    fontSize: 14,
+  },
+  uploadToggleTextActive: {
+    color: '#eaf4ff',
+    fontFamily: Fonts.rounded,
+    fontSize: 14,
+  },
+  dropZone: {
+    marginTop: 6,
+    width: '92%',
+    alignSelf: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(98, 133, 204, 0.42)',
+    backgroundColor: '#ffffff',
+    minHeight: 204,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    gap: 10,
+  },
+  dropZoneFilled: {
+    minHeight: 0,
+    paddingVertical: 10,
+  },
+  dropZoneIconWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(41, 110, 160, 0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(112, 186, 255, 0.35)',
+  },
+  dropZoneTitle: {
+    color: '#152a58',
+    fontFamily: Fonts.rounded,
+    fontSize: 32,
+    lineHeight: 36,
+    textAlign: 'center',
+  },
+  dropZoneText: {
+    color: '#4d6590',
+    fontFamily: Fonts.sans,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+    maxWidth: 520,
+  },
+  browseButton: {
+    minHeight: 42,
+    borderRadius: 12,
+    backgroundColor: '#5f4ae0',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  browseButtonText: {
+    color: '#f5f1ff',
+    fontFamily: Fonts.rounded,
+    fontSize: 14,
+  },
   card: {
+    width: '100%',
+    maxWidth: 1000,
+    alignSelf: 'center',
     borderRadius: 24,
     borderWidth: 1,
     borderColor: palette.borderLight,
@@ -1835,6 +2126,41 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.rounded,
     fontSize: 20,
   },
+  analysisTabBody: {
+    gap: 12,
+  },
+  emptyTabPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(108, 143, 208, 0.32)',
+    backgroundColor: 'rgba(15, 27, 58, 0.55)',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    gap: 12,
+    alignItems: 'center',
+  },
+  emptyTabText: {
+    color: '#b5c8e6',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 21,
+    fontFamily: Fonts.sans,
+  },
+  emptyTabAction: {
+    minHeight: 38,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(90, 195, 228, 0.45)',
+    backgroundColor: 'rgba(44, 132, 175, 0.34)',
+  },
+  emptyTabActionText: {
+    color: '#eaf4ff',
+    fontFamily: Fonts.rounded,
+    fontSize: 13,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1870,7 +2196,7 @@ const styles = StyleSheet.create({
   },
   video: {
     width: '100%',
-    height: 250,
+    height: 192,
   },
   fileMetaRow: {
     flexDirection: 'row',
@@ -1879,10 +2205,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: 'rgba(47, 34, 25, 0.08)',
+    backgroundColor: 'rgba(15, 27, 58, 0.68)',
   },
   fileMetaRowDark: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(15, 27, 58, 0.68)',
   },
   fileNameText: {
     flex: 1,
@@ -1898,12 +2224,12 @@ const styles = StyleSheet.create({
   },
   webPreview: {
     width: '100%',
-    height: 230,
+    height: 198,
     borderRadius: 14,
     objectFit: 'cover',
     borderWidth: 1,
     borderColor: palette.borderLight,
-    backgroundColor: '#1f1813',
+    backgroundColor: '#142347',
   },
   recordingPill: {
     alignSelf: 'flex-start',
@@ -1913,10 +2239,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: '#fff1e0',
+    backgroundColor: 'rgba(24, 38, 77, 0.8)',
   },
   recordingPillText: {
-    color: palette.accentDeep,
+    color: '#dff7ff',
     fontFamily: Fonts.rounded,
     fontSize: 12,
   },
@@ -2579,7 +2905,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: palette.borderLight,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(19, 33, 69, 0.62)',
   },
   presetPillActive: {
     backgroundColor: palette.accent,
@@ -2588,9 +2914,25 @@ const styles = StyleSheet.create({
   presetLabel: {
     fontSize: 12,
     fontFamily: Fonts.rounded,
-    color: palette.accentDeep,
+    color: '#8adce0',
   },
   presetLabelActive: {
-    color: '#fff',
+    color: '#e9fbff',
+  },
+  runCoachButton: {
+    minHeight: 50,
+    borderRadius: 14,
+    backgroundColor: '#39c8cf',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  runCoachButtonText: {
+    color: '#04313c',
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
   },
 });
+
