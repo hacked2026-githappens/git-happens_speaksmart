@@ -13,20 +13,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/contexts/auth';
 import { fetchSessions } from '@/lib/database';
 
 const palette = {
-  accent: '#d1652c',
-  accentDeep: '#b54f1b',
-  mint: '#17998a',
-  lightCanvas: '#f6ede2',
-  darkCanvas: '#1b1510',
-  lightCard: '#fff8ee',
-  darkCard: '#2a211b',
-  borderLight: '#e7c9a4',
-  borderDark: 'rgba(255, 214, 168, 0.28)',
+  accent: '#39c8cf',
+  accentDeep: '#1c8fa3',
+  mint: '#2ac0a8',
+  lightCanvas: '#0f1735',
+  darkCanvas: '#0f1735',
+  lightCard: '#1b2550',
+  darkCard: '#1b2550',
+  borderLight: 'rgba(108, 143, 208, 0.36)',
+  borderDark: 'rgba(108, 143, 208, 0.36)',
 };
 
 const PRESET_COLORS: Record<string, string> = {
@@ -584,8 +583,7 @@ function SessionCard({ session, isDark }: { session: Session; isDark: boolean })
 
 export default function HistoryScreen() {
   const { user } = useAuth();
-  const colorScheme = useColorScheme() ?? 'light';
-  const isDark = colorScheme === 'dark';
+  const isDark = true;
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -775,7 +773,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scrollContent: {
     padding: 18,
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: 100,
     gap: 14,
     maxWidth: 900,

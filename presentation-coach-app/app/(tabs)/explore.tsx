@@ -38,17 +38,17 @@ const checklist = [
 export default function ExploreScreen() {
   return (
     <ParallaxScrollView
-      headerBackgroundColor={{ light: '#f4e6d8', dark: '#251a12' }}
+      headerBackgroundColor={{ light: '#0d1430', dark: '#0d1430' }}
       headerImage={
-        <LinearGradient colors={['#ffba62', '#f0814f', '#2ab4a3']} style={styles.hero}>
+        <LinearGradient colors={['#0f1735', '#1c2251', '#134a54']} style={styles.hero}>
           <ThemedText style={styles.heroTitle}>Practice Guide</ThemedText>
           <ThemedText style={styles.heroSubtitle}>
             Three focused drills to level up each presentation round.
           </ThemedText>
         </LinearGradient>
       }>
-      <ThemedView style={styles.page} lightColor="#f6ede2" darkColor="#1b1510">
-        <ThemedView style={styles.card} lightColor="#fff8ee" darkColor="#2a211b">
+      <ThemedView style={styles.page} lightColor="#0f1735" darkColor="#0f1735">
+        <ThemedView style={styles.card} lightColor="#1b2550" darkColor="#1b2550">
           <View style={styles.sectionHeader}>
             <Ionicons name="book-outline" size={18} color="#d1652c" />
             <ThemedText style={styles.sectionTitle}>Coaching drills</ThemedText>
@@ -67,7 +67,7 @@ export default function ExploreScreen() {
           ))}
         </ThemedView>
 
-        <ThemedView style={styles.card} lightColor="#fff8ee" darkColor="#2a211b">
+        <ThemedView style={styles.card} lightColor="#1b2550" darkColor="#1b2550">
           <View style={styles.sectionHeader}>
             <Ionicons name="clipboard-outline" size={18} color="#17998a" />
             <ThemedText style={styles.sectionTitle}>Before you hit record</ThemedText>
@@ -80,7 +80,7 @@ export default function ExploreScreen() {
           ))}
         </ThemedView>
 
-        <ThemedView style={styles.quoteCard} lightColor="#2a211b" darkColor="#2a211b">
+        <ThemedView style={styles.quoteCard} lightColor="#16234a" darkColor="#16234a">
           <Ionicons name="mic-outline" size={18} color="#ffcc95" />
           <ThemedText style={styles.quoteText}>
             Better speaking is built in loops: record, review, refine, repeat.
@@ -99,13 +99,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   heroTitle: {
-    color: '#fffaf2',
+    color: '#eef5ff',
     fontFamily: Fonts.rounded,
     fontSize: 32,
     lineHeight: 34,
   },
   heroSubtitle: {
-    color: 'rgba(255, 250, 240, 0.92)',
+    color: 'rgba(209, 224, 247, 0.92)',
     maxWidth: 520,
     fontSize: 15,
     lineHeight: 22,
@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#e7c9a4',
+    borderColor: 'rgba(108, 143, 208, 0.36)',
     padding: 16,
     gap: 12,
     ...Platform.select({
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 999,
-    backgroundColor: '#d1652c',
+    backgroundColor: '#2aaeb9',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
@@ -180,8 +180,8 @@ const styles = StyleSheet.create({
     minWidth: 24,
     height: 24,
     borderRadius: 999,
-    backgroundColor: '#17998a',
-    color: '#f3fffb',
+    backgroundColor: '#2aaeb9',
+    color: '#e5f8ff',
     textAlign: 'center',
     lineHeight: 24,
     fontFamily: Fonts.rounded,
@@ -196,12 +196,12 @@ const styles = StyleSheet.create({
   quoteCard: {
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#4e3d31',
+    borderColor: 'rgba(108, 143, 208, 0.36)',
     padding: 16,
     gap: 8,
   },
   quoteText: {
-    color: '#f5e7d3',
+    color: '#d9e9ff',
     fontFamily: Fonts.rounded,
     fontSize: 16,
     lineHeight: 22,
