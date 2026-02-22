@@ -210,3 +210,7 @@ test_*
 # Non-verbal gesture model (local artifact; download per developer)
 backend/non_verbal/models/*.task
 !backend/non_verbal/models/.gitkeep
+
+# MediaPipe task models (local artifacts)
+backend/models/*.task
+!backend/models/.gitkeep
