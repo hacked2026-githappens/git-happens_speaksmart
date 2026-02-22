@@ -11,6 +11,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/contexts/auth';
+import { saveSession } from '@/lib/database';
 
 // TypeScript definitions for web-specific globals
 declare global {
@@ -197,6 +199,7 @@ const PRESETS = [
 export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const isDark = colorScheme === 'dark';
+  const { user, signOut } = useAuth();
 
   const [preset, setPreset] = useState<'general' | 'pitch' | 'classroom' | 'interview' | 'keynote'>('general');
 
@@ -547,7 +550,26 @@ export default function HomeScreen() {
       }
 
       const api = await result.json();
-      setFeedback(mapAnalyzePayload(api));
+      const mapped = mapAnalyzePayload(api);
+      setFeedback(mapped);
+
+      // Fire-and-forget: save session to Supabase if user is logged in
+      if (user) {
+        saveSession(user.id, {
+          preset,
+          duration_s: api.metrics?.duration_seconds ?? null,
+          wpm: api.metrics?.words_per_minute ?? null,
+          pace_label: api.metrics?.pace_label ?? null,
+          filler_count: api.metrics?.filler_word_count ?? null,
+          scores: api.llm_analysis?.scores ?? null,
+          strengths: api.llm_analysis?.strengths ?? null,
+          improvements: api.llm_analysis?.improvements ?? null,
+          transcript: api.transcript ?? null,
+          non_verbal: api.metrics?.non_verbal ?? null,
+        }).catch(() => {
+          // Silent — session saving is best-effort
+        });
+      }
     } catch (error: any) {
       Alert.alert('Error', error?.message ?? 'Something went wrong');
     } finally {
@@ -810,16 +832,30 @@ export default function HomeScreen() {
                 <Ionicons name="film-outline" size={18} color={palette.accentDeep} />
                 <ThemedText style={styles.cardHeaderText}>Your Practice Clip</ThemedText>
               </View>
-              {videoUri ? (
-                <View style={styles.statusBadge}>
-                  <Ionicons name="checkmark-circle" size={14} color="#fef5ea" />
-                  <ThemedText style={styles.statusBadgeText}>Ready</ThemedText>
-                </View>
-              ) : (
-                <View style={[styles.statusBadge, styles.statusBadgeMuted]}>
-                  <ThemedText style={styles.statusBadgeTextMuted}>Waiting for video</ThemedText>
-                </View>
-              )}
+              <View style={styles.cardHeaderRight}>
+                {videoUri ? (
+                  <View style={styles.statusBadge}>
+                    <Ionicons name="checkmark-circle" size={14} color="#fef5ea" />
+                    <ThemedText style={styles.statusBadgeText}>Ready</ThemedText>
+                  </View>
+                ) : (
+                  <View style={[styles.statusBadge, styles.statusBadgeMuted]}>
+                    <ThemedText style={styles.statusBadgeTextMuted}>Waiting for video</ThemedText>
+                  </View>
+                )}
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Sign Out', style: 'destructive', onPress: signOut },
+                    ]);
+                  }}
+                  style={({ pressed }) => [styles.signOutButton, pressed && styles.buttonPressed]}
+                  accessibilityLabel="Sign out"
+                  accessibilityRole="button">
+                  <Ionicons name="log-out-outline" size={20} color={palette.accentDeep} />
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.presetRow}>
@@ -1412,6 +1448,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  cardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  signOutButton: {
+    padding: 6,
+    borderRadius: 8,
   },
   cardHeaderText: {
     fontFamily: Fonts.rounded,
