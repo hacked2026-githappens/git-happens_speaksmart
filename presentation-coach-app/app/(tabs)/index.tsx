@@ -54,6 +54,19 @@ type LLMAnalysis = {
   stats: { flagged_sentences: number };
 };
 
+type ContentSpecificImprovement = {
+  title: string;
+  content_issue: string;
+  specific_fix: string;
+  example_revision: string;
+};
+
+type PersonalizedContentPlan = {
+  topic_summary: string;
+  audience_takeaway: string;
+  improvements: ContentSpecificImprovement[];
+};
+
 type CoachResponse = {
   summary: string;
   bullets?: string[];
@@ -61,6 +74,7 @@ type CoachResponse = {
   notes?: string[];
   transcript?: string;
   llm?: LLMAnalysis;
+  personalizedContentPlan?: PersonalizedContentPlan;
   metrics?: {
     words_per_minute?: number;
     pace_label?: string;
@@ -153,6 +167,7 @@ function mapAnalyzePayload(api: any): CoachResponse {
     notes: [],
     transcript: api.transcript ?? '',
     llm: api.llm_analysis ?? undefined,
+    personalizedContentPlan: api.personalized_content_plan ?? undefined,
     metrics: api.metrics ?? {},
   };
 }
@@ -214,6 +229,7 @@ export default function HomeScreen() {
   const [recording, setRecording] = useState(false);
   const [recordStart, setRecordStart] = useState<number | null>(null);
   const [recordElapsedSeconds, setRecordElapsedSeconds] = useState(0);
+  const [showContentPlan, setShowContentPlan] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [questionBusy, setQuestionBusy] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
@@ -521,10 +537,10 @@ export default function HomeScreen() {
       if (Platform.OS === 'web') {
         const response = await fetch(videoUri);
         const blob = await response.blob();
-        form.append('file', blob, 'practice.mp4');
+        form.append('video', blob, 'practice.mp4');
       } else {
         form.append(
-          'file',
+          'video',
           {
             uri: videoUri,
             name: 'practice.mp4',
@@ -538,7 +554,7 @@ export default function HomeScreen() {
       }
       form.append('preset', preset);
 
-      const result = await fetch(`${BACKEND_URL}/analyze`, {
+      const result = await fetch(`${BACKEND_URL}/api/analyze`, {
         method: 'POST',
         body: form,
       });
@@ -549,9 +565,26 @@ export default function HomeScreen() {
         return;
       }
 
-      const api = await result.json();
+      const { jobId } = await result.json();
+
+      const pollResults = async (id: string): Promise<any> => {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const poll = await fetch(`${BACKEND_URL}/api/results/${id}`);
+          if (!poll.ok) throw new Error(`Poll failed (${poll.status})`);
+          const data = await poll.json();
+          if (data.status === 'done') return data.results;
+          if (data.status === 'error')
+            throw new Error(data.error_message ?? 'Analysis failed on server');
+          // pending or processing → keep polling
+        }
+        throw new Error('Analysis timed out after 4 minutes. Please try again.');
+      };
+
+      const api = await pollResults(jobId);
       const mapped = mapAnalyzePayload(api);
       setFeedback(mapped);
+      setShowContentPlan(false);
 
       // Fire-and-forget: save session to Supabase if user is logged in
       if (user) {
@@ -1020,6 +1053,95 @@ export default function HomeScreen() {
                       </ThemedText>
                     </View>
                   ))}
+                </View>
+              )}
+
+              {!!feedback.personalizedContentPlan?.improvements?.length && (
+                <View style={[styles.contentPlanPanel, isDark && styles.contentPlanPanelDark]}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Toggle topic-specific improvements"
+                    onPress={() => setShowContentPlan((previous) => !previous)}
+                    style={({ pressed }) => [
+                      styles.contentPlanToggle,
+                      isDark && styles.contentPlanToggleDark,
+                      pressed && styles.buttonPressed,
+                    ]}>
+                    <View style={styles.contentPlanToggleLeft}>
+                      <View style={[styles.contentPlanIcon, isDark && styles.contentPlanIconDark]}>
+                        <Ionicons name="sparkles-outline" size={16} color={isDark ? '#ffd6a8' : '#fff3e5'} />
+                      </View>
+                      <View style={styles.contentPlanTextWrap}>
+                        <ThemedText style={[styles.contentPlanToggleTitle, isDark && styles.contentPlanToggleTitleDark]}>
+                          Topic-specific improvements
+                        </ThemedText>
+                        <ThemedText style={[styles.contentPlanToggleHint, isDark && styles.contentPlanToggleHintDark]}>
+                          {showContentPlan
+                            ? 'Hide personalized feedback'
+                            : `View ${feedback.personalizedContentPlan.improvements.length} tailored fixes`}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <View style={styles.contentPlanToggleRight}>
+                      <View style={[styles.contentPlanCountBadge, isDark && styles.contentPlanCountBadgeDark]}>
+                        <ThemedText style={styles.contentPlanCountText}>
+                          {feedback.personalizedContentPlan.improvements.length}
+                        </ThemedText>
+                      </View>
+                      <Ionicons
+                        name={showContentPlan ? 'chevron-up-outline' : 'chevron-down-outline'}
+                        size={18}
+                        color={palette.accentDeep}
+                      />
+                    </View>
+                  </Pressable>
+
+                  {showContentPlan && (
+                    <View style={styles.contentPlanBody}>
+                      {!!feedback.personalizedContentPlan.topic_summary && (
+                        <View style={[styles.contentTopicBox, isDark && styles.contentTopicBoxDark]}>
+                          <ThemedText style={styles.contentTopicLabel}>Detected topic</ThemedText>
+                          <ThemedText style={styles.contentTopicText}>
+                            {feedback.personalizedContentPlan.topic_summary}
+                          </ThemedText>
+                        </View>
+                      )}
+
+                      {!!feedback.personalizedContentPlan.audience_takeaway && (
+                        <View style={styles.contentTakeawayRow}>
+                          <Ionicons name="megaphone-outline" size={15} color={palette.accentDeep} />
+                          <ThemedText style={styles.contentTakeawayText}>
+                            {feedback.personalizedContentPlan.audience_takeaway}
+                          </ThemedText>
+                        </View>
+                      )}
+
+                      {feedback.personalizedContentPlan.improvements.map((item, index) => (
+                        <View
+                          key={`content-improvement-${index}`}
+                          style={[styles.contentImprovementCard, isDark && styles.contentImprovementCardDark]}>
+                          <View style={styles.contentImprovementHeader}>
+                            <View style={[styles.contentImprovementIndex, isDark && styles.contentImprovementIndexDark]}>
+                              <ThemedText style={styles.contentImprovementIndexText}>{index + 1}</ThemedText>
+                            </View>
+                            <ThemedText style={styles.contentImprovementTitle}>{item.title}</ThemedText>
+                          </View>
+                          <ThemedText style={styles.contentImprovementIssue}>
+                            {item.content_issue}
+                          </ThemedText>
+                          <ThemedText style={styles.contentImprovementFix}>
+                            Fix: {item.specific_fix}
+                          </ThemedText>
+                          <View style={[styles.contentRevisionBox, isDark && styles.contentRevisionBoxDark]}>
+                            <Ionicons name="create-outline" size={14} color={palette.accentDeep} />
+                            <ThemedText style={styles.contentRevisionText}>
+                              {item.example_revision}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -1705,6 +1827,206 @@ const styles = StyleSheet.create({
   listItemText: {
     flex: 1,
     lineHeight: 20,
+  },
+  contentPlanPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  contentPlanPanelDark: {
+    backgroundColor: 'rgba(14, 11, 8, 0.62)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentPlanToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  contentPlanToggleDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.74)',
+    borderColor: 'rgba(255, 214, 168, 0.32)',
+  },
+  contentPlanToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 9,
+  },
+  contentPlanIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.accent,
+  },
+  contentPlanIconDark: {
+    backgroundColor: 'rgba(209, 101, 44, 0.6)',
+  },
+  contentPlanTextWrap: {
+    flex: 1,
+  },
+  contentPlanToggleTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 15,
+    lineHeight: 19,
+    color: palette.accentDeep,
+  },
+  contentPlanToggleTitleDark: {
+    color: '#ffe9d2',
+  },
+  contentPlanToggleHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    opacity: 0.78,
+  },
+  contentPlanToggleHintDark: {
+    color: '#f2d9be',
+    opacity: 0.82,
+  },
+  contentPlanToggleRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contentPlanCountBadge: {
+    minWidth: 24,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7d5b9',
+  },
+  contentPlanCountBadgeDark: {
+    backgroundColor: 'rgba(247, 213, 185, 0.22)',
+  },
+  contentPlanCountText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 12,
+    lineHeight: 14,
+    color: palette.accentDeep,
+  },
+  contentPlanBody: {
+    gap: 10,
+  },
+  contentTopicBox: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    gap: 3,
+  },
+  contentTopicBoxDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.74)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentTopicLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: Fonts.rounded,
+    opacity: 0.75,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  contentTopicText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  contentTakeawayRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+  },
+  contentTakeawayText: {
+    flex: 1,
+    lineHeight: 20,
+    fontSize: 13,
+  },
+  contentImprovementHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contentImprovementIndex: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7d5b9',
+  },
+  contentImprovementIndexDark: {
+    backgroundColor: 'rgba(247, 213, 185, 0.22)',
+  },
+  contentImprovementIndexText: {
+    fontFamily: Fonts.rounded,
+    fontSize: 11,
+    lineHeight: 13,
+    color: palette.accentDeep,
+  },
+  contentImprovementCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  contentImprovementCardDark: {
+    backgroundColor: 'rgba(18, 14, 10, 0.72)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentImprovementTitle: {
+    fontFamily: Fonts.rounded,
+    fontSize: 14,
+    lineHeight: 18,
+    color: palette.accentDeep,
+  },
+  contentImprovementIssue: {
+    fontSize: 13,
+    lineHeight: 19,
+    opacity: 0.9,
+  },
+  contentImprovementFix: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  contentRevisionBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.borderLight,
+    backgroundColor: 'rgba(255, 255, 255, 0.62)',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  contentRevisionBoxDark: {
+    backgroundColor: 'rgba(17, 13, 9, 0.72)',
+    borderColor: 'rgba(255, 214, 168, 0.3)',
+  },
+  contentRevisionText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    opacity: 0.88,
   },
   annotatedPanel: {
     borderRadius: 12,
