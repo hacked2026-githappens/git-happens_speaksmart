@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from llm import (
     analyze_with_ollama,
     evaluate_follow_up_answer,
+    generate_content_specific_plan,
     generate_follow_up_question,
     map_llm_events,
 )
@@ -93,12 +94,26 @@ class TimelineMarker(BaseModel):
     message: str
 
 
+class ContentImprovement(BaseModel):
+    title: str
+    content_issue: str
+    specific_fix: str
+    example_revision: str
+
+
+class PersonalizedContentPlan(BaseModel):
+    topic_summary: str
+    audience_takeaway: str
+    improvements: list[ContentImprovement] = Field(default_factory=list)
+
+
 class AnalyzeResponse(BaseModel):
     transcript: str
     metrics: dict[str, Any]
     summary_feedback: list[str]
     markers: list[TimelineMarker]
     llm_analysis: dict[str, Any]
+    personalized_content_plan: PersonalizedContentPlan
     notes: list[str]
 
 
@@ -476,6 +491,12 @@ async def analyze_session(
         llm_result = analyze_with_ollama(words, analysis_context, preset=preset)
         llm_events = map_llm_events(llm_result.get("feedbackEvents", []), words)
         llm_result["feedbackEvents"] = llm_events
+        content_plan = generate_content_specific_plan(
+            transcript=transcript,
+            summary_feedback=summary_feedback,
+            llm_improvements=llm_result.get("improvements", []),
+            preset=preset,
+        )
 
         if not transcript:
             notes.append("Transcript is empty. Speaking metrics may be limited.")
@@ -486,6 +507,7 @@ async def analyze_session(
             summary_feedback=summary_feedback,
             markers=markers,
             llm_analysis=llm_result,
+            personalized_content_plan=content_plan,
             notes=notes,
         )
     finally:
